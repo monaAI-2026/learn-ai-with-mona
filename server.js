@@ -16,6 +16,7 @@ dotenv.config();
 const execAsync = promisify(exec);
 const app = express();
 const PORT = process.env.PORT || 3001;
+const isProduction = process.env.NODE_ENV === 'production';
 
 // ========== MongoDB 连接 ==========
 const connectDB = async () => {
@@ -48,6 +49,11 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+// ========== 生产环境：托管 Vite 构建产物 ==========
+if (isProduction) {
+  app.use(express.static(path.join(process.cwd(), 'dist')));
+}
+
 // 确保 temp 目录存在
 const tempDir = path.join(process.cwd(), 'temp');
 if (!fs.existsSync(tempDir)) {
@@ -79,8 +85,7 @@ function formatTime(seconds) {
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 // ========== yt-dlp 路径与 cookies 配置 ==========
-const isProduction = process.env.NODE_ENV === 'production';
-const YT_DLP = isProduction ? 'yt-dlp' : '/opt/homebrew/bin/yt-dlp';
+const YT_DLP = isProduction ? path.join(process.cwd(), 'bin', 'yt-dlp') : '/opt/homebrew/bin/yt-dlp';
 
 const cookiesPath = path.join(process.cwd(), 'cookies.txt');
 const hasCookiesFile = fs.existsSync(cookiesPath);
@@ -512,6 +517,13 @@ app.post('/api/articles', async (req, res) => {
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// ========== SPA 回退路由（生产环境） ==========
+if (isProduction) {
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(process.cwd(), 'dist', 'index.html'));
+  });
+}
 
 // 启动服务器
 const startServer = async () => {
