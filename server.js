@@ -42,7 +42,7 @@ if (!fs.existsSync(path.join(process.cwd(), 'cookies.txt')) && process.env.YOUTU
 
 // ========== CORS 配置 ==========
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: ['https://learn-ai-with-mona.vercel.app', 'http://localhost:5173', 'http://localhost:3000'],
   credentials: true,
 }));
 // 增加请求体大小限制至 50MB，确保长视频字幕也能正常保存
