@@ -14,6 +14,7 @@ export interface Highlight {
   pos?: string;
   phonetic?: string;
   translation: string;
+  example?: string;
 }
 
 export interface TranscriptPart {

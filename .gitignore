@@ -1,0 +1,15 @@
+# 敏感文件
+cookies.txt
+.env
+
+# 依赖包
+node_modules/
+
+# 构建产物
+dist/
+
+# 临时文件
+temp/
+
+# 本地数据库
+db/

@@ -4,6 +4,9 @@ import Header from '../components/Header';
 import VideoCard from '../components/VideoCard';
 import { Video } from '../types';
 
+// API Base URL - 支持环境变量配置
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+
 const Home: React.FC = () => {
   const navigate = useNavigate();
   const [videos, setVideos] = useState<Video[]>([]);
@@ -12,7 +15,7 @@ const Home: React.FC = () => {
   useEffect(() => {
     const fetchVideos = async () => {
       try {
-        const response = await fetch('http://localhost:3001/api/articles');
+        const response = await fetch(`${API_BASE}/api/articles`);
         const responseData = await response.json();
 
         // 从响应中提取数组（后端返回 { success: true, data: [...] }）
