@@ -1,65 +1,58 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import mongoose from 'mongoose';
 import fs from 'fs';
 import path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { GoogleAIFileManager } from '@google/generative-ai/server';
+import Article from './models/Article.js';
 
 // 加载环境变量
 dotenv.config();
 
 const execAsync = promisify(exec);
 const app = express();
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 
-app.use(cors());
-app.use(express.json());
+// ========== MongoDB 连接 ==========
+const connectDB = async () => {
+  try {
+    if (!process.env.MONGODB_URI) {
+      console.error('❌ 错误：请在 .env 文件中配置 MONGODB_URI');
+      process.exit(1);
+    }
+    await mongoose.connect(process.env.MONGODB_URI);
+    console.log('✅ MongoDB 连接成功');
+  } catch (error) {
+    console.error('❌ MongoDB 连接失败:', error.message);
+    process.exit(1);
+  }
+};
+
+// ========== Cookies 写入逻辑 ==========
+// 如果 cookies.txt 不存在且环境变量中有 YOUTUBE_COOKIES，则写入到 cookies.txt
+if (!fs.existsSync(path.join(process.cwd(), 'cookies.txt')) && process.env.YOUTUBE_COOKIES) {
+  fs.writeFileSync(path.join(process.cwd(), 'cookies.txt'), process.env.YOUTUBE_COOKIES);
+  console.log('✅ 已从环境变量写入 cookies.txt');
+}
+
+// ========== CORS 配置 ==========
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  credentials: true,
+}));
+// 增加请求体大小限制至 50MB，确保长视频字幕也能正常保存
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // 确保 temp 目录存在
 const tempDir = path.join(process.cwd(), 'temp');
 if (!fs.existsSync(tempDir)) {
   fs.mkdirSync(tempDir, { recursive: true });
   console.log('✅ 已创建 temp 目录');
-}
-
-// ========== 数据库配置 ==========
-const dbDir = path.join(process.cwd(), 'db');
-const dbPath = path.join(dbDir, 'articles.json');
-
-// 确保 db 目录存在
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
-  console.log('✅ 已创建 db 目录');
-}
-
-// 初始化数据库文件
-if (!fs.existsSync(dbPath)) {
-  fs.writeFileSync(dbPath, JSON.stringify([], null, 2));
-  console.log('✅ 已创建 articles.json 数据库');
-}
-
-// 数据库辅助函数
-function readDb() {
-  try {
-    const data = fs.readFileSync(dbPath, 'utf-8');
-    return JSON.parse(data);
-  } catch (error) {
-    console.error('❌ 读取数据库失败:', error.message);
-    return [];
-  }
-}
-
-function writeDb(data) {
-  try {
-    fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
-    return true;
-  } catch (error) {
-    console.error('❌ 写入数据库失败:', error.message);
-    return false;
-  }
 }
 
 // 初始化 Gemini
@@ -74,6 +67,26 @@ const genAI = new GoogleGenerativeAI(apiKey);
 const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
 console.log('✅ Gemini API 初始化成功');
+
+// 辅助函数：将秒数转换为 "MM:SS" 格式
+function formatTime(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+}
+
+// Mac Chrome User-Agent
+const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+// ========== yt-dlp 路径与 cookies 配置 ==========
+const isProduction = process.env.NODE_ENV === 'production';
+const YT_DLP = isProduction ? 'yt-dlp' : '/opt/homebrew/bin/yt-dlp';
+
+const cookiesPath = path.join(process.cwd(), 'cookies.txt');
+const hasCookiesFile = fs.existsSync(cookiesPath);
+const COOKIES_FLAG = hasCookiesFile
+  ? `--cookies "${cookiesPath}"`
+  : (isProduction ? '' : '--cookies-from-browser chrome');
 
 // 核心分析接口
 app.post('/analyze', async (req, res) => {
@@ -93,7 +106,7 @@ app.post('/analyze', async (req, res) => {
 
     let metadata = {};
     try {
-      const metaCommand = `yt-dlp --dump-json --cookies-from-browser chrome "${url}"`;
+      const metaCommand = `${YT_DLP} --dump-json ${COOKIES_FLAG} --user-agent "${USER_AGENT}" "${url}"`;
       const { stdout: metaStdout } = await execAsync(metaCommand);
       const videoInfo = JSON.parse(metaStdout);
 
@@ -105,6 +118,22 @@ app.post('/analyze', async (req, res) => {
         upload_date: videoInfo.upload_date,
       };
 
+      // 检查 YouTube 原生章节
+      if (videoInfo.chapters && videoInfo.chapters.length > 0) {
+        metadata.chapters = videoInfo.chapters.map((chapter, index, arr) => ({
+          title: chapter.title,
+          start: formatTime(chapter.start_time),
+          end: formatTime(
+            chapter.end_time ||
+            (arr[index + 1]?.start_time) ||
+            videoInfo.duration
+          ),
+        }));
+        console.log(`✅ 检测到 YouTube 原生章节: ${metadata.chapters.length} 个`);
+      } else {
+        console.log('ℹ️  该视频没有 YouTube 原生章节，将由 AI 生成');
+      }
+
       console.log('✅ 元数据获取成功:', metadata.title);
     } catch (metaError) {
       console.warn('⚠️ 获取元数据失败，继续处理:', metaError.message);
@@ -113,7 +142,7 @@ app.post('/analyze', async (req, res) => {
     // ========== 第二步：下载音频 ==========
     console.log('📥 Step 2: 下载音频...');
 
-    const ytDlpCommand = `yt-dlp -f "ba" -x --audio-format mp3 --cookies-from-browser chrome -o "${tempDir}/%(id)s.%(ext)s" "${url}"`;
+    const ytDlpCommand = `${YT_DLP} -f "ba" -x --audio-format mp3 ${COOKIES_FLAG} --user-agent "${USER_AGENT}" -o "${tempDir}/%(id)s.%(ext)s" "${url}"`;
     const { stdout, stderr } = await execAsync(ytDlpCommand);
 
     console.log('yt-dlp 输出:', stdout);
@@ -163,9 +192,21 @@ app.post('/analyze', async (req, res) => {
 
     const systemPrompt = `你是一个资深的语言学家和 AI 技术专家。请分析这段音频，并严格按照 JSON 格式输出：
 
-segments: 将逐字稿按逻辑分段（不要太长，每段 2-4 句话）。
+segments: 将逐字稿按逻辑分段（不要太长，每段 2-4 句话）。你必须根据音频内容，精准标记每一句话的起止时间。
   - "en": 英文原文。
   - "cn": 对应地道的中文翻译。
+  - "start": 开始时间 (格式为 "MM:SS", 例如 "00:15")
+  - "end": 结束时间 (格式为 "MM:SS", 例如 "00:25")
+
+chapters: 将音频按内容主题划分为逻辑章节，用于显示在进度条上。
+  - "title": 章节标题（简洁明了，3-8 个字）
+  - "start": 开始时间 (格式为 "MM:SS")
+  - "end": 结束时间 (格式为 "MM:SS")
+  - 分段规则：
+    - 基于内容主题进行逻辑分段，每章应该是一个完整的话题或论点
+    - 如果音频较长（超过 15 分钟），每章建议 5-15 分钟
+    - 如果音频较短（15 分钟以内），按自然段落划分，通常 3-6 个章节
+    - 章节之间时间必须连续，不能有间隙
 
 red_list (高价值英语表达 - 严选):
   - 筛选标准: 提取高价值的英语表达，必须同时包含以下两类：
@@ -173,8 +214,12 @@ red_list (高价值英语表达 - 严选):
     2. 地道短语 (Idioms/Phrases): 母语者常用的习语、搭配或口语化隐喻。
   - 正确示例: "nuance", "mitigate", "scrutinize", "leverage", "counterintuitive", "flesh out", "move the needle", "low hanging fruit"
   - 错误示例 (绝对不要选): 简单词汇如 "use", "good", "make", "problem", "task", "example"
-  - 字段: word, pronunciation, definition_cn, example
-  - 解释风格: "definition_cn" 必须解释它在当前语境下的言外之意或微妙语气，而不仅仅是字典定义。
+  - 字段说明 (必须严格遵守):
+    - word: 单词或短语原文
+    - pronunciation: 音标（使用 IPA 国际音标）
+    - definition_cn: 中文释义（必须解释它在当前语境下的言外之意或微妙语气，而不仅仅是字典定义）
+    - example: 必须造一个全新的的英文例句来展示该单词的用法。严禁直接复制视频字幕中的原句。例句应通俗易懂，有助于初学者理解。
+    - example_cn: 将上述新造的英文例句翻译成地道的中文。
 
 blue_list (行业术语):
   - 提取 AI/Tech 领域的专业术语（如 "Context Window", "RAG", "Inference"）。
@@ -201,15 +246,9 @@ blue_list (行业术语):
     // 强化 JSON 清洗函数
     function cleanJsonResponse(text) {
       let cleaned = text.trim();
-
-      // 使用正则表达式移除所有可能的 markdown 代码块标记
-      // 匹配 ```json 或 ``` 开头和结尾
       cleaned = cleaned.replace(/^```(?:json)?\s*\n?/i, '');
       cleaned = cleaned.replace(/\n?```\s*$/i, '');
-
-      // 移除首尾的所有空白字符（包括换行、制表符等）
       cleaned = cleaned.trim();
-
       return cleaned;
     }
 
@@ -247,10 +286,28 @@ blue_list (行业术语):
       console.log('✅ 已删除云端文件');
     }
 
-    // 返回结果（包含元数据）
+    // 处理 chapters：优先使用 YouTube 原生章节，否则使用 AI 生成的
+    let finalChapters;
+    if (metadata.chapters && metadata.chapters.length > 0) {
+      finalChapters = metadata.chapters;
+      console.log('📍 使用 YouTube 原生章节');
+    } else if (analysisResult.chapters && analysisResult.chapters.length > 0) {
+      finalChapters = analysisResult.chapters;
+      console.log('📍 使用 AI 生成的章节');
+    } else {
+      finalChapters = [];
+      console.log('⚠️ 未获取到章节信息');
+    }
+
+    // 返回结果（包含元数据和章节）
     res.json({
       success: true,
-      data: analysisResult,
+      data: {
+        segments: analysisResult.segments,
+        chapters: finalChapters,
+        red_list: analysisResult.red_list,
+        blue_list: analysisResult.blue_list,
+      },
       metadata: metadata,
     });
 
@@ -282,10 +339,12 @@ blue_list (行业术语):
 
 // ========== 文章 API ==========
 
-// 获取所有文章
-app.get('/api/articles', (req, res) => {
+// 获取所有文章 (主页用 - 过滤隐藏内容)
+app.get('/api/articles', async (req, res) => {
   try {
-    const articles = readDb();
+    const articles = await Article.find({ isHidden: { $ne: true } })
+      .sort({ createdAt: -1 })
+      .lean();
     res.json({
       success: true,
       data: articles,
@@ -299,10 +358,124 @@ app.get('/api/articles', (req, res) => {
   }
 });
 
-// 保存文章
-app.post('/api/articles', (req, res) => {
+// ========== 管理员 API ==========
+
+// 获取所有文章 (管理员用 - 包含隐藏内容)
+app.get('/api/admin/list', async (req, res) => {
   try {
-    // 📥 收到请求时打印
+    const articles = await Article.find()
+      .sort({ createdAt: -1 })
+      .lean();
+    res.json({
+      success: true,
+      data: articles,
+    });
+  } catch (error) {
+    console.error('❌ 获取管理员文章列表失败:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// 切换文章可见性
+app.post('/api/admin/toggle-visibility', async (req, res) => {
+  try {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: '请提供文章 ID',
+      });
+    }
+
+    const article = await Article.findOne({ id });
+
+    if (!article) {
+      return res.status(404).json({
+        success: false,
+        error: '文章不存在',
+      });
+    }
+
+    // 切换 isHidden 状态
+    article.isHidden = !article.isHidden;
+    await article.save();
+
+    console.log(`✅ 文章 ${id} 可见性已切换为: ${article.isHidden ? '隐藏' : '可见'}`);
+    res.json({
+      success: true,
+      isHidden: article.isHidden,
+    });
+  } catch (error) {
+    console.error('❌ 切换可见性失败:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// 删除文章
+app.post('/api/admin/delete', async (req, res) => {
+  try {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: '请提供文章 ID',
+      });
+    }
+
+    const article = await Article.findOneAndDelete({ id });
+
+    if (!article) {
+      return res.status(404).json({
+        success: false,
+        error: '文章不存在',
+      });
+    }
+
+    console.log(`✅ 文章 ${id} 已删除`);
+
+    // 尝试清理 temp 目录下的相关缓存文件
+    const videoId = article.metadata?.id;
+    if (videoId) {
+      try {
+        const possibleFiles = [
+          path.join(tempDir, `${videoId}.mp3`),
+          path.join(tempDir, `${videoId}.jpg`),
+          path.join(tempDir, `${videoId}.png`),
+        ];
+
+        possibleFiles.forEach(filePath => {
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            console.log(`🧹 已清理缓存文件: ${filePath}`);
+          }
+        });
+      } catch (cleanupError) {
+        console.warn('⚠️ 清理缓存文件时出错:', cleanupError.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: '删除成功',
+    });
+  } catch (error) {
+    console.error('❌ 删除文章失败:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// 保存文章
+app.post('/api/articles', async (req, res) => {
+  try {
     console.log('📥 收到保存请求，数据大小:', JSON.stringify(req.body).length);
 
     const articleData = req.body;
@@ -314,45 +487,19 @@ app.post('/api/articles', (req, res) => {
       });
     }
 
-    // 生成唯一 ID
-    const newArticle = {
+    // 创建新文章
+    const newArticle = new Article({
       id: Date.now().toString(),
-      createdAt: new Date().toISOString(),
       ...articleData,
-    };
+    });
 
-    // 使用绝对路径读取数据库
-    const dbFilePath = path.join(process.cwd(), 'db', 'articles.json');
-    let currentData = [];
+    await newArticle.save();
 
-    try {
-      const fileContent = fs.readFileSync(dbFilePath, 'utf-8');
-      currentData = JSON.parse(fileContent);
-    } catch (readError) {
-      console.warn('⚠️ 读取数据库文件失败，将创建新文件:', readError.message);
-      currentData = [];
-    }
+    console.log('✅ 文章已保存到 MongoDB');
 
-    // 📖 读取数据库后打印
-    console.log('📖 读取数据库成功，现有文章数:', currentData.length);
-
-    // 将新文章追加到头部
-    currentData.unshift(newArticle);
-
-    // 💾 准备写入时打印
-    console.log('💾 正在写入文件...');
-
-    // 使用绝对路径写入数据库
-    fs.writeFileSync(dbFilePath, JSON.stringify(currentData, null, 2));
-
-    // ✅ 写入完成后打印
-    console.log('✅ 写入完成！');
-
-    // 返回成功响应
     res.json({ success: true, message: '保存成功' });
 
   } catch (error) {
-    // ❌ 错误捕获
     console.error('❌ 保存出错:', error);
     res.status(500).json({
       success: false,
@@ -366,8 +513,15 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-app.listen(PORT, () => {
-  console.log(`\n🚀 后端服务器运行在 http://localhost:${PORT}`);
-  console.log(`📁 临时文件目录: ${tempDir}`);
-  console.log('✨ 音频多模态分析服务已就绪\n');
-});
+// 启动服务器
+const startServer = async () => {
+  await connectDB();
+
+  app.listen(PORT, () => {
+    console.log(`\n🚀 后端服务器运行在 http://localhost:${PORT}`);
+    console.log(`📁 临时文件目录: ${tempDir}`);
+    console.log('✨ 音频多模态分析服务已就绪\n');
+  });
+};
+
+startServer();
