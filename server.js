@@ -125,7 +125,7 @@ app.post('/analyze', async (req, res) => {
 
     let metadata = {};
     try {
-      const metaCommand = `${YT_DLP} --dump-json ${COOKIES_FLAG} --user-agent "${USER_AGENT}" "${url}"`;
+      const metaCommand = `${YT_DLP} --dump-json ${COOKIES_FLAG} --user-agent "${USER_AGENT}" --js-runtimes nodejs "${url}"`;
       const { stdout: metaStdout } = await execAsync(metaCommand);
       const videoInfo = JSON.parse(metaStdout);
 
@@ -161,7 +161,7 @@ app.post('/analyze', async (req, res) => {
     // ========== 第二步：下载音频 ==========
     console.log('📥 Step 2: 下载音频...');
 
-    const ytDlpCommand = `${YT_DLP} -f "ba" -x --audio-format mp3 ${COOKIES_FLAG} --user-agent "${USER_AGENT}" -o "${tempDir}/%(id)s.%(ext)s" "${url}"`;
+    const ytDlpCommand = `${YT_DLP} -f "ba" -x --audio-format mp3 ${COOKIES_FLAG} --user-agent "${USER_AGENT}" --js-runtimes nodejs -o "${tempDir}/%(id)s.%(ext)s" "${url}"`;
     const { stdout, stderr } = await execAsync(ytDlpCommand);
 
     console.log('yt-dlp 输出:', stdout);
@@ -532,6 +532,22 @@ app.post('/api/articles', async (req, res) => {
 // 健康检查接口
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// 调试接口：检查 cookies.txt 状态
+app.get('/debug/cookies', (req, res) => {
+  const cPath = path.join(process.cwd(), 'cookies.txt');
+  const exists = fs.existsSync(cPath);
+  if (!exists) return res.json({ exists: false });
+  const content = fs.readFileSync(cPath, 'utf-8');
+  const lines = content.split('\n');
+  res.json({
+    exists: true,
+    lineCount: lines.length,
+    firstLine: lines[0],
+    nonEmptyLines: lines.filter(l => l.trim() && !l.startsWith('#')).length,
+    preview: lines.slice(0, 3).join('\n'),
+  });
 });
 
 // 调试接口：检查 yt-dlp 版本和路径
