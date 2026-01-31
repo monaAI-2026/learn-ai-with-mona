@@ -95,7 +95,7 @@ function formatTime(seconds) {
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 // ========== yt-dlp 路径与 cookies 配置 ==========
-const YT_DLP = isProduction ? path.join(process.cwd(), 'bin', 'yt-dlp') : '/opt/homebrew/bin/yt-dlp';
+const YT_DLP = isProduction ? 'yt-dlp' : '/opt/homebrew/bin/yt-dlp';
 
 const cookiesPath = path.join(process.cwd(), 'cookies.txt');
 const hasCookiesFile = fs.existsSync(cookiesPath);
