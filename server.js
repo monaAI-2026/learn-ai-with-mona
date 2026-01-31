@@ -42,7 +42,17 @@ if (!fs.existsSync(path.join(process.cwd(), 'cookies.txt')) && process.env.YOUTU
 
 // ========== CORS 配置 ==========
 app.use(cors({
-  origin: ['https://learn-ai-with-mona.vercel.app', 'http://localhost:5173', 'http://localhost:3000'],
+  origin: (origin, callback) => {
+    // 允许无 origin 的请求（curl、Postman、服务端调用等）
+    if (!origin) return callback(null, true);
+
+    const allowed =
+      origin === 'http://localhost:5173' ||
+      origin.endsWith('.vercel.app') ||
+      (process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL.replace(/\/$/, ''));
+
+    callback(null, allowed || false);
+  },
   credentials: true,
 }));
 // 增加请求体大小限制至 50MB，确保长视频字幕也能正常保存
