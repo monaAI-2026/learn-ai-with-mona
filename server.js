@@ -520,7 +520,7 @@ app.get('/health', (req, res) => {
 
 // ========== SPA 回退路由（生产环境） ==========
 if (isProduction) {
-  app.get('*', (req, res) => {
+  app.get('/(.*)', (req, res) => {
     res.sendFile(path.join(process.cwd(), 'dist', 'index.html'));
   });
 }
