@@ -348,6 +348,8 @@ blue_list (行业术语):
     res.status(500).json({
       success: false,
       error: error.message,
+      stack: error.stack,
+      details: 'Backend Error Log',
     });
   }
 });
