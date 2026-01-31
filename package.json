@@ -8,7 +8,7 @@
     "dev": "concurrently \"npm run server\" \"npm run client\"",
     "client": "vite",
     "server": "node server.js",
-    "build": "vite build",
+    "build": "vite build && pip install --upgrade yt-dlp",
     "preview": "vite preview"
   },
   "dependencies": {
