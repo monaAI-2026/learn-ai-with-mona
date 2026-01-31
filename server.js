@@ -34,10 +34,14 @@ const connectDB = async () => {
 };
 
 // ========== Cookies 写入逻辑 ==========
-// 如果 cookies.txt 不存在且环境变量中有 YOUTUBE_COOKIES，则写入到 cookies.txt
+console.log('🔍 YOUTUBE_COOKIES 环境变量:', process.env.YOUTUBE_COOKIES ? `存在 (${process.env.YOUTUBE_COOKIES.length} 字符)` : '未设置');
+console.log('🔍 cookies.txt 文件:', fs.existsSync(path.join(process.cwd(), 'cookies.txt')) ? '已存在' : '不存在');
+
 if (!fs.existsSync(path.join(process.cwd(), 'cookies.txt')) && process.env.YOUTUBE_COOKIES) {
   fs.writeFileSync(path.join(process.cwd(), 'cookies.txt'), process.env.YOUTUBE_COOKIES);
   console.log('✅ 已从环境变量写入 cookies.txt');
+} else if (!process.env.YOUTUBE_COOKIES) {
+  console.warn('⚠️ 未检测到 YOUTUBE_COOKIES 环境变量，yt-dlp 将无 cookies 运行');
 }
 
 // ========== CORS 配置 ==========
