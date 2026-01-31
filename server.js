@@ -99,7 +99,7 @@ function formatTime(seconds) {
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 // ========== yt-dlp 路径与 cookies 配置 ==========
-const YT_DLP = isProduction ? 'yt-dlp' : '/opt/homebrew/bin/yt-dlp';
+const YT_DLP = isProduction ? path.join(process.cwd(), 'bin', 'yt-dlp') : '/opt/homebrew/bin/yt-dlp';
 
 const cookiesPath = path.join(process.cwd(), 'cookies.txt');
 const hasCookiesFile = fs.existsSync(cookiesPath);
@@ -537,8 +537,8 @@ app.get('/health', (req, res) => {
 // 调试接口：检查 yt-dlp 版本和路径
 app.get('/debug/yt-dlp', async (req, res) => {
   try {
-    const { stdout: version } = await execAsync('yt-dlp --version');
-    const { stdout: which } = await execAsync('which yt-dlp');
+    const { stdout: version } = await execAsync(`${YT_DLP} --version`);
+    const { stdout: which } = await execAsync(`ls -la ${YT_DLP}`);
     res.json({ version: version.trim(), path: which.trim() });
   } catch (error) {
     res.json({ error: error.message });
