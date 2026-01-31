@@ -534,6 +534,17 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// 调试接口：检查 yt-dlp 版本和路径
+app.get('/debug/yt-dlp', async (req, res) => {
+  try {
+    const { stdout: version } = await execAsync('yt-dlp --version');
+    const { stdout: which } = await execAsync('which yt-dlp');
+    res.json({ version: version.trim(), path: which.trim() });
+  } catch (error) {
+    res.json({ error: error.message });
+  }
+});
+
 // ========== SPA 回退路由（生产环境） ==========
 if (isProduction) {
   app.get(/.*/, (req, res) => {
