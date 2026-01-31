@@ -542,7 +542,7 @@ const startServer = async () => {
   await connectDB();
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n🚀 后端服务器运行在 http://localhost:${PORT}`);
+    console.log(`\n🚀 后端服务器运行在 0.0.0.0:${PORT}`);
     console.log(`📁 临时文件目录: ${tempDir}`);
     console.log('✨ 音频多模态分析服务已就绪\n');
   });
