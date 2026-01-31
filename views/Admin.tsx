@@ -502,7 +502,31 @@ const AnalysisResultPanel: React.FC<AnalysisResultPanelProps> = ({
   );
 };
 
+const SESSION_KEY = 'admin_authenticated';
+
 const Admin: React.FC = () => {
+  const [isAuthenticated, setIsAuthenticated] = useState(
+    () => sessionStorage.getItem(SESSION_KEY) === 'true'
+  );
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState(false);
+
+  const handleLogin = () => {
+    if (password === import.meta.env.VITE_ADMIN_PASSWORD) {
+      setIsAuthenticated(true);
+      sessionStorage.setItem(SESSION_KEY, 'true');
+      setAuthError(false);
+    } else {
+      setAuthError(true);
+    }
+  };
+
+  const handleLoginKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleLogin();
+    }
+  };
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
@@ -575,8 +599,44 @@ const Admin: React.FC = () => {
 
   // 页面加载时获取视频列表
   useEffect(() => {
-    fetchVideos();
-  }, []);
+    if (isAuthenticated) {
+      fetchVideos();
+    }
+  }, [isAuthenticated]);
+
+  // 密码验证界面
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-sm">
+          <h2 className="text-xl font-semibold text-gray-800 text-center mb-6">
+            管理后台
+          </h2>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              setAuthError(false);
+            }}
+            onKeyDown={handleLoginKeyDown}
+            placeholder="请输入密码"
+            className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 mb-4"
+            autoFocus
+          />
+          {authError && (
+            <p className="text-red-500 text-sm mb-4">密码错误，请重试</p>
+          )}
+          <button
+            onClick={handleLogin}
+            className="w-full py-3 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-xl transition-colors"
+          >
+            确认
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // 格式化日期
   const formatDate = (dateString: string) => {
