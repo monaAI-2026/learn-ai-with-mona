@@ -125,7 +125,7 @@ app.post('/analyze', async (req, res) => {
 
     let metadata = {};
     try {
-      const metaCommand = `${YT_DLP} --dump-json ${COOKIES_FLAG} --user-agent "${USER_AGENT}" --js-runtimes nodejs "${url}"`;
+      const metaCommand = `${YT_DLP} --dump-json ${COOKIES_FLAG} --user-agent "${USER_AGENT}" --js-runtimes node "${url}"`;
       const { stdout: metaStdout } = await execAsync(metaCommand);
       const videoInfo = JSON.parse(metaStdout);
 
@@ -161,7 +161,7 @@ app.post('/analyze', async (req, res) => {
     // ========== 第二步：下载音频 ==========
     console.log('📥 Step 2: 下载音频...');
 
-    const ytDlpCommand = `${YT_DLP} -f "ba" -x --audio-format mp3 ${COOKIES_FLAG} --user-agent "${USER_AGENT}" --js-runtimes nodejs -o "${tempDir}/%(id)s.%(ext)s" "${url}"`;
+    const ytDlpCommand = `${YT_DLP} -f "ba" -x --audio-format mp3 ${COOKIES_FLAG} --user-agent "${USER_AGENT}" --js-runtimes node -o "${tempDir}/%(id)s.%(ext)s" "${url}"`;
     const { stdout, stderr } = await execAsync(ytDlpCommand);
 
     console.log('yt-dlp 输出:', stdout);
