@@ -138,6 +138,7 @@ const VideoInputModal: React.FC<VideoInputModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
+      title="添加视频"
       footer={
         <Button
           variant="primary"
@@ -533,9 +534,10 @@ const Admin: React.FC = () => {
         <div className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-sm animate-scale-in">
           <div className="flex justify-center mb-6">
             <svg width="40" height="40" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect width="28" height="28" rx="7" fill="#4285F4" />
-              <path d="M8 10L14 7L20 10V18L14 21L8 18V10Z" stroke="white" strokeWidth="1.5" fill="none" />
-              <circle cx="14" cy="14" r="2.5" fill="white" />
+              {/* Blue circular background */}
+              <circle cx="14" cy="14" r="14" fill="#4285F4" />
+              {/* White solid triangle */}
+              <path d="M14 7.5 L20.5 19 L7.5 19 Z" fill="white" />
             </svg>
           </div>
           <h2 className="text-xl font-medium text-warm-800 text-center mb-6">
@@ -673,7 +675,7 @@ const Admin: React.FC = () => {
     <div className="min-h-screen bg-warm-50">
       {/* Header */}
       <div className="bg-white/80 backdrop-blur-md border-b border-warm-200/60 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-6 py-5">
+        <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-5 max-w-[95vw] 2xl:max-w-[1600px]">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <h1 className="text-2xl font-medium text-warm-800">
               视频管理后台
@@ -715,7 +717,7 @@ const Admin: React.FC = () => {
       </div>
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-6 py-8 animate-page-enter">
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-page-enter max-w-[95vw] 2xl:max-w-[1600px]">
         {videosLoading ? (
           <div className="flex items-center justify-center py-20">
             <div className="animate-spin rounded-full h-10 w-10 border-2 border-accent border-t-transparent"></div>

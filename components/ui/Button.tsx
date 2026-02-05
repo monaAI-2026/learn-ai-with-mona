@@ -21,9 +21,14 @@ const Button: React.FC<ButtonProps> = ({
 }) => {
   const baseStyles = 'rounded-xl font-medium transition-all duration-200 flex items-center justify-center gap-2';
 
+  // When loading, keep original color but prevent interaction
   const variantStyles = {
-    primary: 'bg-accent text-white hover:bg-accent-hover disabled:bg-warm-300 disabled:cursor-not-allowed',
-    secondary: 'bg-warm-100 text-warm-700 hover:bg-warm-200 disabled:bg-warm-100 disabled:cursor-not-allowed',
+    primary: loading
+      ? 'bg-accent text-white cursor-wait'
+      : 'bg-accent text-white hover:bg-accent-hover disabled:bg-warm-300 disabled:cursor-not-allowed',
+    secondary: loading
+      ? 'bg-warm-100 text-warm-700 cursor-wait'
+      : 'bg-warm-100 text-warm-700 hover:bg-warm-200 disabled:bg-warm-100 disabled:cursor-not-allowed',
   };
 
   const sizeStyles = {

@@ -177,6 +177,9 @@ const VideoDetail: React.FC = () => {
               : 0);
 
         // Data Adapter: Transcript parts with time info
+        // Track highlighted words to ensure each word only appears once (first occurrence)
+        const highlightedWords = new Set<string>();
+
         const transcriptParts: TranscriptPartWithTime[] = article.segments?.map((seg: any) => {
           const highlights: Highlight[] = [];
 
@@ -184,16 +187,21 @@ const VideoDetail: React.FC = () => {
             article.red_list.forEach((item: any) => {
               const word = item.word || item.term;
               if (word && seg.en && seg.en.toLowerCase().includes(word.toLowerCase())) {
-                highlights.push({
-                  text: word,
-                  type: 'language',
-                  definition: item.definition_cn || item.definition || '',
-                  translation: item.definition_cn || '',
-                  phonetic: item.pronunciation || '',
-                  pos: item.pos || '',
-                  example: item.example || '',
-                  example_cn: item.example_cn || '',
-                });
+                // Only highlight if this word hasn't been highlighted before
+                const wordKey = word.toLowerCase();
+                if (!highlightedWords.has(wordKey)) {
+                  highlightedWords.add(wordKey);
+                  highlights.push({
+                    text: word,
+                    type: 'language',
+                    definition: item.definition_cn || item.definition || '',
+                    translation: item.definition_cn || '',
+                    phonetic: item.pronunciation || '',
+                    pos: item.pos || '',
+                    example: item.example || '',
+                    example_cn: item.example_cn || '',
+                  });
+                }
               }
             });
           }
@@ -202,13 +210,18 @@ const VideoDetail: React.FC = () => {
             article.blue_list.forEach((item: any) => {
               const term = item.term || item.word;
               if (term && seg.en && seg.en.toLowerCase().includes(term.toLowerCase())) {
-                highlights.push({
-                  text: term,
-                  type: 'technical',
-                  definition: item.definition_cn || item.definition || '',
-                  translation: item.definition_cn || '',
-                  example: item.example || '',
-                });
+                // Only highlight if this term hasn't been highlighted before
+                const termKey = term.toLowerCase();
+                if (!highlightedWords.has(termKey)) {
+                  highlightedWords.add(termKey);
+                  highlights.push({
+                    text: term,
+                    type: 'technical',
+                    definition: item.definition_cn || item.definition || '',
+                    translation: item.definition_cn || '',
+                    example: item.example || '',
+                  });
+                }
               }
             });
           }
@@ -421,7 +434,6 @@ const VideoDetail: React.FC = () => {
 
   const panelTabs = [
     { key: 'transcript', label: 'Transcript' },
-    { key: 'vocabulary', label: 'Vocabulary' },
     { key: 'bookmark', label: 'Bookmarks' },
   ];
 
@@ -429,16 +441,16 @@ const VideoDetail: React.FC = () => {
     <div className="min-h-screen bg-warm-50">
       <Header />
 
-      <main className="max-w-[1440px] mx-auto px-6 py-8 animate-page-enter">
+      <main className="container mx-auto px-4 sm:px-6 py-8 animate-page-enter max-w-[95vw] 2xl:max-w-[1800px]">
         {/* Video Title */}
-        <h1 className="text-xl md:text-2xl font-medium text-warm-800 mb-5 leading-snug max-w-4xl">
+        <h1 className="text-xl md:text-2xl font-medium text-warm-800 mb-5 leading-snug">
           {video.title}
         </h1>
 
-        <div className="flex flex-col lg:flex-row gap-10">
+        <div className="flex flex-col lg:flex-row gap-6 xl:gap-10">
 
           {/* Left Column: Video Area */}
-          <div className="flex-1 lg:max-w-[900px] flex flex-col space-y-4">
+          <div className="flex-1 min-w-0 flex flex-col space-y-4">
             {/* Player Container */}
             <div
               ref={playerContainerRef}
@@ -560,7 +572,7 @@ const VideoDetail: React.FC = () => {
           </div>
 
           {/* Right Column: Learning Panel */}
-          <div className="w-full lg:w-[480px] flex flex-col h-[calc(100vh-140px)] sticky top-24">
+          <div className="w-full lg:w-[420px] xl:w-[480px] 2xl:w-[520px] flex-shrink-0 flex flex-col h-[calc(100vh-140px)] sticky top-24">
             <div className="bg-white border border-warm-200/60 rounded-2xl flex flex-col h-full shadow-sm overflow-hidden">
               {/* Tabs */}
               <div className="px-6">
@@ -587,8 +599,8 @@ const VideoDetail: React.FC = () => {
                           ref={el => transcriptRefs.current[idx] = el}
                           className={`leading-relaxed cursor-pointer transition-all duration-300 scroll-mt-6 rounded-lg px-3 py-2 -mx-3 ${
                             isActive
-                              ? 'opacity-100 border-l-2 border-accent bg-accent-light/50'
-                              : 'opacity-40 hover:opacity-70 border-l-2 border-transparent'
+                              ? 'border-l-2 border-accent bg-accent-light/50'
+                              : 'border-l-2 border-transparent hover:bg-warm-50'
                           }`}
                           onClick={() => handleTranscriptClick(part.startTime)}
                         >
@@ -596,14 +608,18 @@ const VideoDetail: React.FC = () => {
                           <span className="text-[10px] text-warm-400 font-mono mb-1 block">
                             {formatTime(part.startTime)}
                           </span>
-                          <div className={`leading-relaxed text-pretty ${
-                            isActive ? 'text-[15px] text-warm-800 font-medium' : 'text-[13px] font-normal'
+                          <div className={`leading-relaxed text-pretty transition-colors ${
+                            isActive
+                              ? 'text-[15px] text-warm-800 font-medium'
+                              : 'text-[13px] font-normal text-warm-600'
                           }`}>
                             {renderTextWithHighlights(part.en, part.highlights)}
                           </div>
                           {showCn && (
-                            <div className={`leading-relaxed mt-1 ${
-                              isActive ? 'text-[13px] text-warm-500 font-medium' : 'text-[13px] font-normal'
+                            <div className={`leading-relaxed mt-1 transition-colors ${
+                              isActive
+                                ? 'text-[13px] text-warm-500 font-medium'
+                                : 'text-[13px] font-normal text-warm-400'
                             }`}>
                               {part.zh}
                             </div>
@@ -617,34 +633,6 @@ const VideoDetail: React.FC = () => {
                       <p className="text-sm">Synthesizing insights...</p>
                     </div>
                   )
-                )}
-
-                {/* Vocabulary Tab */}
-                {activeTab === 'vocabulary' && (
-                  <div className="space-y-6">
-                    {allVocabulary.language.length === 0 && allVocabulary.technical.length === 0 ? (
-                      <div className="text-center py-24 text-warm-300">
-                        <p className="text-sm">No vocabulary found for this video</p>
-                      </div>
-                    ) : (
-                      <>
-                        <VocabSection
-                          title="地道表达 / Expressions"
-                          items={allVocabulary.language}
-                          type="language"
-                          bookmarks={bookmarks}
-                          onToggleBookmark={toggleBookmark}
-                        />
-                        <VocabSection
-                          title="专业术语 / Technical Terms"
-                          items={allVocabulary.technical}
-                          type="technical"
-                          bookmarks={bookmarks}
-                          onToggleBookmark={toggleBookmark}
-                        />
-                      </>
-                    )}
-                  </div>
                 )}
 
                 {/* Bookmarks Tab */}

@@ -224,10 +224,14 @@ chapters: 将音频按内容主题划分为逻辑章节，用于显示在进度�
   - "title": 章节标题（简洁明了，3-8 个字）
   - "start": 开始时间 (格式为 "MM:SS")
   - "end": 结束时间 (格式为 "MM:SS")
-  - 分段规则：
+  - 章节数量限制（根据视频总时长）：
+    - 视频时长 < 1小时（60分钟）：最多 10 个章节
+    - 视频时长 1-1.5小时（60-90分钟）：最多 12 个章节
+    - 视频时长 1.5-2.5小时（90-150分钟）：最多 14 个章节
+    - 视频时长 > 2.5小时（150分钟以上）：最多 15 个章节
+  - 分段原则：
     - 基于内容主题进行逻辑分段，每章应该是一个完整的话题或论点
-    - 如果音频较长（超过 15 分钟），每章建议 5-15 分钟
-    - 如果音频较短（15 分钟以内），按自然段落划分，通常 3-6 个章节
+    - 优先在重要主题转换点、论点切换处分章，而非机械地平均分配时间
     - 章节之间时间必须连续，不能有间隙
 
 red_list (高价值英语表达 - 严选):
@@ -235,7 +239,11 @@ red_list (高价值英语表达 - 严选):
     1. 高级单词 (Advanced Vocabulary): C1/C2 难度、GRE/TOEFL 级别、学术性或极具表现力的单个单词。
     2. 地道短语 (Idioms/Phrases): 母语者常用的习语、搭配或口语化隐喻。
   - 正确示例: "nuance", "mitigate", "scrutinize", "leverage", "counterintuitive", "flesh out", "move the needle", "low hanging fruit"
-  - 错误示例 (绝对不要选): 简单词汇如 "use", "good", "make", "problem", "task", "example"
+  - 错误示例 (绝对不要选):
+    - 简单词汇: "use", "good", "make", "problem", "task", "example", "data", "model", "system"
+    - 单个字母缩写: "AI", "ML", "IT", "API" 等
+    - 过于基础的技术词: "computer", "software", "internet", "code"
+  - 每个单词/短语只能出现一次，即使在视频中多次提到
   - 字段说明 (必须严格遵守):
     - word: 单词或短语原文
     - pronunciation: 音标（使用 IPA 国际音标）
@@ -243,8 +251,13 @@ red_list (高价值英语表达 - 严选):
     - example: 必须造一个全新的的英文例句来展示该单词的用法。严禁直接复制视频字幕中的原句。例句应通俗易懂，有助于初学者理解。
     - example_cn: 将上述新造的英文例句翻译成地道的中文。
 
-blue_list (行业术语):
-  - 提取 AI/Tech 领域的专业术语（如 "Context Window", "RAG", "Inference"）。
+blue_list (行业术语 - 严选):
+  - 筛选标准: 提取真正有学习价值的专业术语（如 "Context Window", "RAG", "Inference", "Fine-tuning"）
+  - 错误示例 (绝对不要选):
+    - 单个字母缩写: "AI", "ML", "NLP", "GPU", "API"
+    - 过于基础的词: "data", "model", "algorithm", "computer", "software"
+    - 通用技术词: "website", "app", "cloud", "database"
+  - 每个术语只能出现一次，即使在视频中多次提到
   - 字段: term, definition_cn
 
 注意：不要生成全文摘要。输出必须是纯净的 JSON，不要包含 Markdown 标记。
