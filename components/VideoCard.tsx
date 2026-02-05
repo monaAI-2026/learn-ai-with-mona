@@ -1,38 +1,54 @@
 import React from 'react';
+import { Play } from 'lucide-react';
 import { Video } from '../types';
-import Tag from './Tag';
+import Badge from './ui/Badge';
 
 interface VideoCardProps {
   video: Video;
   onClick: (id: string) => void;
+  style?: React.CSSProperties;
 }
 
-const VideoCard: React.FC<VideoCardProps> = ({ video, onClick }) => {
+const VideoCard: React.FC<VideoCardProps> = ({ video, onClick, style }) => {
   return (
-    <div 
-      className="group cursor-pointer flex flex-col space-y-3 p-4 border-r border-b border-gray-100 last:border-r-0 transition-all duration-300 hover:scale-[1.02] hover:z-10 hover:shadow-lg bg-white relative"
+    <div
+      className="group cursor-pointer bg-white rounded-2xl overflow-hidden border border-warm-200/60 transition-all duration-300 hover:shadow-lg hover:-translate-y-1"
       onClick={() => onClick(video.id)}
+      style={style}
     >
-      <div className="aspect-video bg-gray-100 overflow-hidden relative">
-        <img 
-          src={video.thumbnail} 
+      {/* Thumbnail */}
+      <div className="aspect-video bg-warm-100 overflow-hidden relative">
+        <img
+          src={video.thumbnail}
           alt={video.title}
-          className="w-full h-full object-cover transition-all duration-300"
+          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
         />
-        <div className="absolute bottom-2 right-2 px-1 py-0.5 bg-black/60 text-white text-[10px] rounded">
+        {/* Play button overlay */}
+        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-black/20">
+          <div className="w-12 h-12 rounded-full bg-white/90 backdrop-blur-sm flex items-center justify-center shadow-lg">
+            <Play size={20} className="text-warm-800 ml-0.5" fill="currentColor" />
+          </div>
+        </div>
+        {/* Duration badge */}
+        <div className="absolute bottom-2 right-2 px-2 py-0.5 bg-black/70 text-white text-[11px] font-medium rounded-md backdrop-blur-sm">
           {video.duration}
         </div>
       </div>
-      
-      <div className="flex flex-wrap gap-2">
-        {video.categories.map((cat) => (
-          <Tag key={cat} category={cat} />
-        ))}
+
+      {/* Content */}
+      <div className="p-5 space-y-3">
+        {/* Category badges */}
+        <div className="flex flex-wrap gap-1.5">
+          {video.categories.map((cat) => (
+            <Badge key={cat} category={cat} />
+          ))}
+        </div>
+
+        {/* Title */}
+        <h3 className="text-base font-medium text-warm-800 leading-snug line-clamp-2 group-hover:text-warm-900 transition-colors">
+          {video.title}
+        </h3>
       </div>
-      
-      <h3 className="text-lg font-medium text-gray-800 leading-tight transition-colors group-hover:text-black">
-        {video.title}
-      </h3>
     </div>
   );
 };

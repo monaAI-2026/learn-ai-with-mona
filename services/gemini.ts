@@ -1,3 +1,12 @@
+/**
+ * ⚠️ NOTE: This file is currently NOT USED in the application.
+ * The app uses backend API calls (server.js) instead of direct frontend Gemini calls.
+ * Kept as reference/backup code for potential future frontend-direct implementation.
+ *
+ * If you want to use this, change VITE_GOOGLE_API_KEY to VITE_GEMINI_API_KEY
+ * and add it to your .env file.
+ */
+
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;

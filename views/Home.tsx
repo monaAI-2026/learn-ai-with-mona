@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import VideoCard from '../components/VideoCard';
+import { SkeletonCard } from '../components/ui/Skeleton';
 import { Video } from '../types';
 
 // API Base URL - 支持环境变量配置
@@ -43,45 +44,38 @@ const Home: React.FC = () => {
     fetchVideos();
   }, []);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-white">
-        <Header />
-        <div className="text-center py-20">加载中...</div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-warm-50">
       <Header />
 
-      <main className="max-w-7xl mx-auto px-6">
+      <main className="max-w-7xl mx-auto px-6 animate-page-enter">
         {/* Hero Section */}
-        <div className="py-24 md:py-32 text-center space-y-4">
-          <h1 className="text-5xl md:text-7xl font-source-han font-normal text-gray-800 tracking-tight">
-            Learn AI in the Native Context.
+        <div className="py-20 md:py-28 text-center space-y-5">
+          <h1 className="text-4xl md:text-6xl lg:text-7xl font-medium text-warm-800 tracking-tight leading-tight">
+            Learn AI in the
+            <br />
+            <span className="text-accent">Native Context.</span>
           </h1>
-          <p className="text-gray-400 text-lg md:text-xl font-light">
-            原生语境获取AI一手信息，学AI的同时学英语
-          </p>
         </div>
 
         {/* Video Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 border-t border-l border-gray-100 mb-20">
-          {videos.map((video) => (
-            <VideoCard
-              key={video.id}
-              video={video}
-              onClick={(id) => navigate(`/video/${id}`)}
-            />
-          ))}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-20">
+          {loading
+            ? Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)
+            : videos.map((video, i) => (
+                <VideoCard
+                  key={video.id}
+                  video={video}
+                  onClick={(id) => navigate(`/video/${id}`)}
+                  style={{ animationDelay: `${i * 80}ms` }}
+                />
+              ))}
         </div>
       </main>
 
-      <footer className="border-t border-gray-100 py-10 px-6 text-center">
-        <p className="text-gray-400 text-sm font-light">
-          &copy; 2024 Mona AI Learning. Curating the best for the global AI community.
+      <footer className="border-t border-warm-200/60 py-10 px-6 text-center">
+        <p className="text-warm-400 text-sm font-light">
+          &copy; 2025 Learn AI with Mona. Curating the best for the global AI community.
         </p>
       </footer>
     </div>

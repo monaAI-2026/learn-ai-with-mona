@@ -52,6 +52,8 @@ app.use(cors({
 
     const allowed =
       origin === 'http://localhost:5173' ||
+      origin.startsWith('http://localhost:') ||
+      origin.startsWith('http://192.168.') ||
       origin.endsWith('.vercel.app') ||
       (process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL.replace(/\/$/, ''));
 
@@ -76,9 +78,9 @@ if (!fs.existsSync(tempDir)) {
 }
 
 // 初始化 Gemini
-const apiKey = process.env.GOOGLE_API_KEY;
+const apiKey = process.env.GEMINI_API_KEY;
 if (!apiKey) {
-  console.error('❌ 错误：请在 .env 文件中配置 GOOGLE_API_KEY');
+  console.error('❌ 错误：请在 .env 文件中配置 GEMINI_API_KEY');
   process.exit(1);
 }
 
@@ -101,11 +103,12 @@ const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/
 // ========== yt-dlp 路径与 cookies 配置 ==========
 const YT_DLP = isProduction ? path.join(process.cwd(), 'bin', 'yt-dlp') : '/opt/homebrew/bin/yt-dlp';
 
+// 优先使用浏览器 cookies（更新鲜），生产环境才用 cookies.txt
 const cookiesPath = path.join(process.cwd(), 'cookies.txt');
 const hasCookiesFile = fs.existsSync(cookiesPath);
-const COOKIES_FLAG = hasCookiesFile
+const COOKIES_FLAG = isProduction && hasCookiesFile
   ? `--cookies "${cookiesPath}"`
-  : (isProduction ? '' : '--cookies-from-browser chrome');
+  : '--cookies-from-browser chrome';
 
 // 核心分析接口
 app.post('/analyze', async (req, res) => {

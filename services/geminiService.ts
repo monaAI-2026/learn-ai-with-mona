@@ -1,3 +1,8 @@
+/**
+ * ⚠️ NOTE: This file is currently NOT USED in the application.
+ * The app uses backend API calls (server.js) instead of direct frontend Gemini calls.
+ * Kept as reference/backup code for potential future implementation.
+ */
 
 import { GoogleGenAI, Type } from "@google/genai";
 import { AISummary } from "../types";
