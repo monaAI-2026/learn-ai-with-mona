@@ -112,6 +112,15 @@ const COOKIES_FLAG = isProduction && hasCookiesFile
 
 // 核心分析接口
 app.post('/analyze', async (req, res) => {
+  // 设置超长超时时间 (2 小时 = 7200000 ms)
+  // 因为视频分析涉及下载、上传、AI 处理，可能需要很长时间
+  req.setTimeout(7200000);  // 2 小时
+  res.setTimeout(7200000);  // 2 小时
+
+  // 设置 Keep-Alive 响应头，防止代理断开连接
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Keep-Alive', 'timeout=7200');
+
   const { url } = req.body;
   let localFilePath = null;
   let uploadedFile = null;
@@ -121,10 +130,13 @@ app.post('/analyze', async (req, res) => {
       return res.status(400).json({ error: '请提供 YouTube 视频链接' });
     }
 
-    console.log('\n🎵 开始处理视频:', url);
+    console.log('\n🎵 ========== [1/6] 开始处理视频 ==========');
+    console.log('📎 视频链接:', url);
+    console.log('⏰ 开始时间:', new Date().toLocaleString('zh-CN'));
 
     // ========== 第一步：获取视频元数据 ==========
-    console.log('📋 Step 1: 获取视频元数据...');
+    console.log('\n📋 ========== [2/6] 获取视频元数据 ==========');
+    console.log('⏳ 正在获取，预计需要 2-5 秒...');
 
     let metadata = {};
     try {
@@ -156,13 +168,18 @@ app.post('/analyze', async (req, res) => {
         console.log('ℹ️  该视频没有 YouTube 原生章节，将由 AI 生成');
       }
 
-      console.log('✅ 元数据获取成功:', metadata.title);
+      console.log('✅ 元数据获取成功！');
+      console.log('📺 标题:', metadata.title);
+      console.log('⏱️  时长:', Math.floor(metadata.duration / 60), '分钟');
+      console.log('🆔 视频ID:', metadata.id);
     } catch (metaError) {
       console.warn('⚠️ 获取元数据失败，继续处理:', metaError.message);
     }
 
     // ========== 第二步：下载音频 ==========
-    console.log('📥 Step 2: 下载音频...');
+    console.log('\n📥 ========== [3/6] 下载音频文件 ==========');
+    console.log('⏳ 正在下载，预计需要 5-15 分钟（取决于视频长度和网速）...');
+    console.log('💡 提示：可以去泡杯咖啡 ☕');
 
     const ytDlpCommand = `${YT_DLP} -f "ba" -x --audio-format mp3 ${COOKIES_FLAG} --user-agent "${USER_AGENT}" --js-runtimes node -o "${tempDir}/%(id)s.%(ext)s" "${url}"`;
     const { stdout, stderr } = await execAsync(ytDlpCommand);
@@ -177,24 +194,33 @@ app.post('/analyze', async (req, res) => {
     }
 
     localFilePath = path.join(tempDir, files[0]);
-    console.log('✅ 音频下载成功:', localFilePath);
 
     // 检查文件大小
     const stats = fs.statSync(localFilePath);
-    console.log(`📊 文件大小: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
+    const fileSizeMB = (stats.size / 1024 / 1024).toFixed(2);
+
+    console.log('✅ 音频下载成功！');
+    console.log('📦 文件大小:', fileSizeMB, 'MB');
+    console.log('📁 临时路径:', localFilePath);
 
     // ========== 第三步：上传到 Gemini ==========
-    console.log('☁️  Step 3: 上传音频到 Gemini...');
+    console.log('\n☁️  ========== [4/6] 上传到 Gemini ==========');
+    console.log('📤 文件大小:', fileSizeMB, 'MB');
+    console.log('⏳ 正在上传，预计需要 3-10 分钟...');
 
     uploadedFile = await fileManager.uploadFile(localFilePath, {
       mimeType: 'audio/mpeg',
       displayName: path.basename(localFilePath),
     });
 
-    console.log('✅ 上传成功，文件 URI:', uploadedFile.file.uri);
+    console.log('✅ 上传完成！');
+    console.log('🔗 文件 URI:', uploadedFile.file.uri);
+    console.log('📛 文件名称:', uploadedFile.file.displayName);
 
     // ========== 第四步：等待文件处理完成 ==========
-    console.log('⏳ Step 4: 等待文件处理...');
+    console.log('\n⏳ ========== [4.5/6] 等待 Gemini 处理文件 ==========');
+    console.log('💭 Gemini 正在处理音频文件...');
+    console.log('⏱️  预计需要 5-15 分钟（取决于文件大小）');
 
     let file = await fileManager.getFile(uploadedFile.file.name);
     while (file.state === 'PROCESSING') {
@@ -207,10 +233,23 @@ app.post('/analyze', async (req, res) => {
       throw new Error(`文件处理失败，状态: ${file.state}`);
     }
 
-    console.log('✅ 文件处理完成');
+    console.log('✅ Gemini 文件处理完成！');
+    console.log('📊 文件状态:', file.state);
 
     // ========== 第五步：AI 分析 ==========
-    console.log('🤖 Step 5: AI 分析中...');
+    console.log('\n🤖 ========== [5/6] AI 音频分析 ==========');
+    console.log('🧠 这是最耗时的步骤，AI 正在：');
+    console.log('   - 转写音频为逐字稿');
+    console.log('   - 翻译成中文');
+    console.log('   - 提取重点词汇和术语');
+    console.log('   - 生成智能章节');
+    console.log('');
+    console.log('⏱️  预估时间：');
+    console.log('   - 1小时视频：约 15-25 分钟');
+    console.log('   - 3小时视频：约 40-60 分钟');
+    console.log('');
+    console.log('💡 建议：去做其他事情，无需等待在电脑前');
+    console.log('⏰ 当前时间:', new Date().toLocaleString('zh-CN'));
 
     const systemPrompt = `你是一个资深的语言学家和 AI 技术专家。请分析这段音频，并严格按照 JSON 格式输出：
 
@@ -275,7 +314,8 @@ blue_list (行业术语 - 严选):
     ]);
 
     const responseText = result.response.text();
-    console.log('✅ AI 分析完成');
+    console.log('\n✅ ========== AI 分析完成！==========');
+    console.log('⏰ 完成时间:', new Date().toLocaleString('zh-CN'));
     console.log('📄 原始响应:', responseText.substring(0, 500) + '...');
 
     // 强化 JSON 清洗函数
@@ -294,7 +334,12 @@ blue_list (行业术语 - 严选):
     let analysisResult;
     try {
       analysisResult = JSON.parse(jsonText);
-      console.log('✅ JSON 解析成功');
+      console.log('✅ JSON 解析成功！');
+      console.log('📊 分析结果统计：');
+      console.log('   - 字幕段落数:', analysisResult.segments?.length || 0);
+      console.log('   - 重点词汇数:', analysisResult.red_list?.length || 0);
+      console.log('   - 专业术语数:', analysisResult.blue_list?.length || 0);
+      console.log('   - 章节数:', analysisResult.chapters?.length || 0);
     } catch (parseError) {
       console.error('❌ JSON 解析失败！');
       console.error('解析错误:', parseError.message);
@@ -307,18 +352,18 @@ blue_list (行业术语 - 严选):
     }
 
     // ========== 第六步：清理资源 ==========
-    console.log('🧹 Step 6: 清理资源...');
+    console.log('\n🧹 ========== [6/6] 清理资源 ==========');
 
     // 删除本地文件
     if (localFilePath && fs.existsSync(localFilePath)) {
       fs.unlinkSync(localFilePath);
-      console.log('✅ 已删除本地文件');
+      console.log('✅ 已删除本地文件:', localFilePath);
     }
 
     // 删除云端文件
     if (uploadedFile) {
       await fileManager.deleteFile(uploadedFile.file.name);
-      console.log('✅ 已删除云端文件');
+      console.log('✅ 已删除云端文件:', uploadedFile.file.name);
     }
 
     // 处理 chapters：优先使用 YouTube 原生章节，否则使用 AI 生成的
@@ -346,7 +391,9 @@ blue_list (行业术语 - 严选):
       metadata: metadata,
     });
 
-    console.log('🎉 分析完成！\n');
+    console.log('\n🎉 ========== 处理完成，返回结果 ==========');
+    console.log('✅ 所有步骤已完成');
+    console.log('📤 正在返回结果给前端...\n');
 
   } catch (error) {
     console.error('\n❌ 处理失败:', error);
@@ -588,11 +635,22 @@ if (isProduction) {
 const startServer = async () => {
   await connectDB();
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n🚀 后端服务器运行在 0.0.0.0:${PORT}`);
     console.log(`📁 临时文件目录: ${tempDir}`);
     console.log('✨ 音频多模态分析服务已就绪\n');
   });
+
+  // 设置服务器级别的超时时间为 2 小时
+  // 这对于长时间运行的视频分析任务是必需的
+  server.timeout = 7200000;           // 2 小时 (7200000ms)
+  server.keepAliveTimeout = 7200000;  // 2 小时
+  server.headersTimeout = 7210000;    // 稍长于 keepAliveTimeout
+
+  console.log('⚙️  服务器超时配置:');
+  console.log('   - timeout: 2 小时');
+  console.log('   - keepAliveTimeout: 2 小时');
+  console.log('   - 支持长时间视频分析\n');
 };
 
 startServer();

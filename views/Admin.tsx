@@ -587,7 +587,21 @@ const Admin: React.FC = () => {
     setResult(null);
 
     try {
-      console.log('开始音频多模态分析...');
+      console.log('\n🎬 ========== 开始视频分析 ==========');
+      console.log('📎 视频链接:', videoUrl);
+      console.log('⏰ 提交时间:', new Date().toLocaleString('zh-CN'));
+      console.log('');
+      console.log('⏳ 预计处理时间：');
+      console.log('   - 短视频（<30分钟）：约 5-15 分钟');
+      console.log('   - 中等视频（30-60分钟）：约 15-30 分钟');
+      console.log('   - 长视频（1-3小时）：约 40-90 分钟');
+      console.log('');
+      console.log('💡 建议：');
+      console.log('   1. 打开 Railway 日志查看详细进度');
+      console.log('   2. 可以最小化浏览器窗口，去做其他事情');
+      console.log('   3. 请勿刷新页面或关闭标签页');
+      console.log('');
+      console.log('🔄 正在发送请求...\n');
 
       const response = await fetch(`${API_BASE}/analyze`, {
         method: 'POST',
@@ -603,7 +617,15 @@ const Admin: React.FC = () => {
       }
 
       const responseData = await response.json();
-      console.log('分析成功:', responseData);
+      console.log('\n✅ ========== 分析成功 ==========');
+      console.log('⏰ 完成时间:', new Date().toLocaleString('zh-CN'));
+      console.log('📊 结果统计：');
+      console.log('   - 字幕段落:', responseData.data.segments?.length || 0);
+      console.log('   - 重点词汇:', responseData.data.red_list?.length || 0);
+      console.log('   - 专业术语:', responseData.data.blue_list?.length || 0);
+      console.log('   - 章节数:', responseData.data.chapters?.length || 0);
+      console.log('📺 视频标题:', responseData.metadata?.title || '未知');
+      console.log('\n');
 
       if (!responseData.success || !responseData.data) {
         throw new Error('服务器返回数据格式错误');
@@ -613,7 +635,15 @@ const Admin: React.FC = () => {
       setMetadata(responseData.metadata || null);
       setIsModalOpen(false);
     } catch (err) {
-      console.error('处理失败:', err);
+      console.error('\n❌ ========== 处理失败 ==========');
+      console.error('⏰ 失败时间:', new Date().toLocaleString('zh-CN'));
+      console.error('❌ 错误信息:', err);
+      console.error('💡 可能的原因：');
+      console.error('   1. 网络连接中断');
+      console.error('   2. Railway 服务器超时');
+      console.error('   3. Gemini API 出错');
+      console.error('   4. 视频链接无效或无法访问');
+      console.error('\n');
       setError(err instanceof Error ? err.message : '未知错误');
     } finally {
       setLoading(false);
