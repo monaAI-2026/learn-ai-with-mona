@@ -1,18 +1,17 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { useParams, useNavigate } from 'react-router-dom';
 import YouTube, { YouTubePlayer, YouTubeEvent } from 'react-youtube';
-import { Bookmark as BookmarkIcon, Loader2, Maximize, Minimize } from 'lucide-react';
+import { Maximize, Minimize, Send, Languages, MessageCircle, Copy, RotateCcw, Check, X } from 'lucide-react';
 import screenfull from 'screenfull';
 import Header from '../components/Header';
 import HighlightedWord from '../components/HighlightedWord';
-import Tabs from '../components/ui/Tabs';
-import { Video, Highlight, Bookmark, Segment } from '../types';
+import { Video, Highlight, Segment, QuizQuestion } from '../types';
 
-// API Base URL - 支持环境变量配置
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+// API Base URL
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3099';
 
-// Extended TranscriptPart with time information for sync
 interface TranscriptPartWithTime {
   en: string;
   zh: string;
@@ -21,60 +20,135 @@ interface TranscriptPartWithTime {
   endTime: number;
 }
 
-// Extended Video type for internal use
 interface VideoWithTimedTranscript extends Omit<Video, 'transcriptParts'> {
   transcriptParts?: TranscriptPartWithTime[];
 }
 
-// ==================== VocabSection Component ====================
-interface VocabSectionProps {
-  title: string;
-  items: Highlight[];
-  type: 'language' | 'technical';
-  bookmarks: Bookmark[];
-  onToggleBookmark: (h: Highlight) => void;
+// 字幕分页：超过阈值时按中文标点拆成两页
+const SUBTITLE_PAGE_LEN = 22;
+function splitSubtitle(text: string): [string, string] | null {
+  if (text.length <= SUBTITLE_PAGE_LEN) return null;
+  const mid = Math.floor(text.length / 2);
+  const puncts = ['，', '。', '；', '！', '？', '、', ',', '.', ';'];
+  for (let r = 0; r <= 10; r++) {
+    for (const sign of [1, -1]) {
+      const pos = mid + sign * r;
+      if (pos > 0 && pos < text.length - 1 && puncts.includes(text[pos])) {
+        return [text.slice(0, pos + 1).trim(), text.slice(pos + 1).trim()];
+      }
+    }
+  }
+  return [text.slice(0, mid), text.slice(mid)];
 }
 
-const VocabSection: React.FC<VocabSectionProps> = ({ title, items, type, bookmarks, onToggleBookmark }) => {
-  const colorClass = type === 'language' ? 'text-[#C5221F]' : 'text-[#1A73E8]';
-  const bgClass = type === 'language' ? 'bg-[#FCE8E6]' : 'bg-[#E8F0FE]';
-  const borderClass = type === 'language' ? 'border-[#F28B82]/30' : 'border-[#A8C7FA]/30';
+interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  suggestions?: string[];
+}
 
-  if (items.length === 0) return null;
+// ==================== Quiz Modal ====================
+const QuizModal: React.FC<{ questions: QuizQuestion[]; onClose: () => void }> = ({ questions, onClose }) => {
+  const [qIndex, setQIndex] = useState(0);
+  const [answers, setAnswers] = useState<(number | null)[]>(questions.map(() => null));
+
+  const q = questions[qIndex];
+  const selected = answers[qIndex];
+  const isAnswered = selected !== null;
+  const allAnswered = answers.every((a) => a !== null);
+  const onLast = qIndex === questions.length - 1;
+  const showResult = allAnswered && onLast && isAnswered;
+  const score = answers.filter((a, i) => a === questions[i].answer).length;
+
+  const handleSelect = (i: number) => {
+    if (isAnswered) return;
+    setAnswers((prev) => prev.map((a, idx) => idx === qIndex ? i : a));
+  };
+
+  const reset = () => { setAnswers(questions.map(() => null)); setQIndex(0); };
 
   return (
-    <div>
-      <h4 className={`text-sm font-semibold ${colorClass} mb-3 px-1`}>{title}</h4>
-      <div className="space-y-2">
-        {items.map((item, idx) => {
-          const isBookmarked = bookmarks.some(b => b.term === item.text);
-          return (
-            <div
-              key={idx}
-              className={`${bgClass} border ${borderClass} rounded-xl p-3 flex items-start justify-between gap-2 transition-colors hover:border-opacity-40`}
-            >
-              <div className="flex-1 min-w-0">
-                <div className={`font-semibold text-sm ${colorClass}`}>
-                  {item.text}
-                  {item.pos && (
-                    <span className="ml-2 text-[10px] font-normal text-warm-400 uppercase">{item.pos}</span>
-                  )}
-                </div>
-                <p className="text-xs text-warm-600 mt-0.5 leading-relaxed">
-                  {item.definition || item.translation}
-                </p>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm"
+      onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 overflow-hidden animate-scaleIn">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-warm-100">
+          <div className="flex items-center gap-3">
+            <span className="text-[13px] font-medium text-warm-800">测验</span>
+            <div className="flex gap-1.5">
+              {questions.map((_, i) => (
+                <button key={i} onClick={() => setQIndex(i)}
+                  className={`h-1.5 rounded-full transition-all duration-300 ${
+                    i === qIndex ? 'w-4 bg-warm-800' :
+                    answers[i] !== null ? 'w-1.5 bg-warm-400' : 'w-1.5 bg-warm-200'}`} />
+              ))}
+            </div>
+          </div>
+          <button onClick={onClose} className="text-warm-300 hover:text-warm-500 transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Quiz content */}
+        {!showResult ? (
+          <>
+            <div className="px-6 py-5">
+              <p className="text-[11px] text-warm-400 mb-3">{qIndex + 1} / {questions.length}</p>
+              <p className="text-[15px] font-medium text-warm-800 mb-5 leading-relaxed">{q.question}</p>
+              <div className="space-y-2 mb-4">
+                {q.options.map((opt, i) => {
+                  let cls = 'border-warm-100 text-warm-600 hover:border-warm-300 hover:bg-warm-50 cursor-pointer';
+                  if (isAnswered) {
+                    if (i === q.answer) cls = 'border-green-300 bg-green-50 text-green-800 cursor-default';
+                    else if (i === selected) cls = 'border-red-200 bg-red-50 text-red-700 cursor-default';
+                    else cls = 'border-warm-100 text-warm-300 cursor-default';
+                  }
+                  return (
+                    <button key={i} onClick={() => handleSelect(i)}
+                      className={`w-full text-left px-4 py-3 rounded-xl border text-[13px] transition-all flex items-center justify-between ${cls}`}>
+                      <span>{opt}</span>
+                      {isAnswered && i === q.answer && <Check size={13} className="text-green-600 shrink-0" />}
+                      {isAnswered && i === selected && i !== q.answer && <X size={13} className="text-red-400 shrink-0" />}
+                    </button>
+                  );
+                })}
               </div>
-              <button
-                onClick={() => onToggleBookmark(item)}
-                className={`flex-shrink-0 mt-0.5 transition-colors ${
-                  isBookmarked ? 'text-accent' : 'text-warm-300 hover:text-warm-400'
-                }`}
-              >
-                <BookmarkIcon size={14} className={isBookmarked ? 'fill-current' : ''} />
+              {isAnswered && (
+                <div className="bg-warm-50 rounded-xl px-4 py-3 chat-message-enter">
+                  <p className="text-[12px] text-warm-500 leading-relaxed">{q.explanation}</p>
+                </div>
+              )}
+            </div>
+            <div className="flex justify-between items-center px-6 pb-5">
+              <button onClick={() => setQIndex((i) => Math.max(0, i - 1))}
+                className={`text-[12px] text-warm-400 hover:text-warm-600 transition-colors ${qIndex === 0 ? 'invisible' : ''}`}>
+                上一题
+              </button>
+              <button onClick={() => onLast ? undefined : setQIndex((i) => i + 1)}
+                disabled={!isAnswered || onLast}
+                className={`text-[12px] px-4 py-1.5 rounded-full transition-all ${
+                  isAnswered && !onLast ? 'bg-warm-800 text-white hover:bg-warm-700 cursor-pointer' :
+                  'bg-warm-100 text-warm-300 cursor-not-allowed'}`}>
+                {onLast ? '完成' : '下一题'}
               </button>
             </div>
-          );
-        })}
+          </>
+        ) : (
+          /* Result */
+          <div className="px-6 py-10 text-center">
+            <p className="text-4xl font-semibold text-warm-800 mb-2">{score} / {questions.length}</p>
+            <p className="text-[13px] text-warm-400 mb-8">
+              {score === questions.length ? '全部答对，掌握得很好！' :
+               score >= questions.length * 0.6 ? '不错，继续加油！' : '建议再看一遍视频'}
+            </p>
+            {score < questions.length && (
+              <button onClick={reset}
+                className="text-[13px] px-5 py-2 bg-warm-800 text-white rounded-full hover:bg-warm-700 transition-colors">
+                再试一次
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -87,8 +161,16 @@ const VideoDetail: React.FC = () => {
   const [video, setVideo] = useState<VideoWithTimedTranscript | null>(null);
   const [showCn, setShowCn] = useState(true);
   const [activeTab, setActiveTab] = useState('transcript');
-  const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [hoveredLabelIndex, setHoveredLabelIndex] = useState<number | null>(null);
+
+  // Chat state
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [showQuiz, setShowQuiz] = useState(false);
+  const [sentQuestions, setSentQuestions] = useState<Set<number>>(new Set());
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Progress & Time Sync State
   const [progress, setProgress] = useState(0);
@@ -108,7 +190,6 @@ const VideoDetail: React.FC = () => {
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Helper function: parse "MM:SS" to seconds
   const parseTime = useCallback((timeStr: string): number => {
     if (!timeStr || typeof timeStr !== 'string') return 0;
     const parts = timeStr.split(':');
@@ -117,27 +198,6 @@ const VideoDetail: React.FC = () => {
     const seconds = parseInt(parts[1], 10) || 0;
     return minutes * 60 + seconds;
   }, []);
-
-  // Collect all vocabulary from transcript
-  const allVocabulary = React.useMemo(() => {
-    if (!video?.transcriptParts) return { language: [] as Highlight[], technical: [] as Highlight[] };
-    const seen = new Set<string>();
-    const language: Highlight[] = [];
-    const technical: Highlight[] = [];
-
-    video.transcriptParts.forEach((part) => {
-      part.highlights.forEach((h) => {
-        const key = `${h.type}-${h.text.toLowerCase()}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          if (h.type === 'language') language.push(h);
-          else technical.push(h);
-        }
-      });
-    });
-
-    return { language, technical };
-  }, [video?.transcriptParts]);
 
   useEffect(() => {
     const fetchArticle = async () => {
@@ -152,7 +212,6 @@ const VideoDetail: React.FC = () => {
           return;
         }
 
-        // Data Adapter: Progress bar segments
         let progressSegments: Segment[] = [];
 
         if (article.chapters && Array.isArray(article.chapters) && article.chapters.length > 0) {
@@ -176,64 +235,19 @@ const VideoDetail: React.FC = () => {
               ? progressSegments[progressSegments.length - 1].endTime
               : 0);
 
-        // Data Adapter: Transcript parts with time info
-        // Track highlighted words to ensure each word only appears once (first occurrence)
-        const highlightedWords = new Set<string>();
-
-        const transcriptParts: TranscriptPartWithTime[] = article.segments?.map((seg: any) => {
+        const rawSegments: any[] = article.segments || [];
+        const transcriptParts: TranscriptPartWithTime[] = rawSegments.map((seg, i) => {
           const highlights: Highlight[] = [];
-
-          if (article.red_list && Array.isArray(article.red_list)) {
-            article.red_list.forEach((item: any) => {
-              const word = item.word || item.term;
-              if (word && seg.en && seg.en.toLowerCase().includes(word.toLowerCase())) {
-                // Only highlight if this word hasn't been highlighted before
-                const wordKey = word.toLowerCase();
-                if (!highlightedWords.has(wordKey)) {
-                  highlightedWords.add(wordKey);
-                  highlights.push({
-                    text: word,
-                    type: 'language',
-                    definition: item.definition_cn || item.definition || '',
-                    translation: item.definition_cn || '',
-                    phonetic: item.pronunciation || '',
-                    pos: item.pos || '',
-                    example: item.example || '',
-                    example_cn: item.example_cn || '',
-                  });
-                }
-              }
-            });
-          }
-
-          if (article.blue_list && Array.isArray(article.blue_list)) {
-            article.blue_list.forEach((item: any) => {
-              const term = item.term || item.word;
-              if (term && seg.en && seg.en.toLowerCase().includes(term.toLowerCase())) {
-                // Only highlight if this term hasn't been highlighted before
-                const termKey = term.toLowerCase();
-                if (!highlightedWords.has(termKey)) {
-                  highlightedWords.add(termKey);
-                  highlights.push({
-                    text: term,
-                    type: 'technical',
-                    definition: item.definition_cn || item.definition || '',
-                    translation: item.definition_cn || '',
-                    example: item.example || '',
-                  });
-                }
-              }
-            });
-          }
-
-          return {
-            en: seg.en || '',
-            zh: seg.cn || '',
-            highlights,
-            startTime: parseTime(seg.start),
-            endTime: parseTime(seg.end),
-          };
-        }) || [];
+          const startTime = parseTime(seg.start);
+          const rawEnd = parseTime(seg.end);
+          // 用下一段的 startTime 补齐缺失或为 0 的 endTime
+          const endTime = rawEnd > startTime
+            ? rawEnd
+            : rawSegments[i + 1]
+              ? parseTime(rawSegments[i + 1].start)
+              : startTime + 30; // 最后一段兜底给 30 秒
+          return { en: seg.en || '', zh: seg.cn || '', highlights, startTime, endTime };
+        });
 
         const transformedVideo: VideoWithTimedTranscript = {
           id: article.id,
@@ -245,6 +259,8 @@ const VideoDetail: React.FC = () => {
           duration: String(duration),
           segments: progressSegments,
           transcriptParts,
+          example_questions: article.example_questions || [],
+          quiz: article.quiz || [],
         };
 
         setVideo(transformedVideo);
@@ -256,6 +272,101 @@ const VideoDetail: React.FC = () => {
 
     fetchArticle();
   }, [id, navigate, parseTime]);
+
+  // Auto-scroll chat to bottom
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages]);
+
+  const sendChatMessage = async (overrideMessage?: string) => {
+    const userMessage = overrideMessage ?? chatInput.trim();
+    if (!userMessage || isChatLoading || !video) return;
+
+    if (!overrideMessage) setChatInput('');
+
+    const newMessages: ChatMessage[] = [...chatMessages, { role: 'user', content: userMessage }];
+    setChatMessages(newMessages);
+    setIsChatLoading(true);
+
+    const transcriptText = video.transcriptParts?.map(p => p.en).join(' ') || '';
+
+    const geminiHistory = chatMessages.map(m => ({
+      role: m.role === 'user' ? 'user' : 'model',
+      parts: [{ text: m.content }],
+    }));
+
+    try {
+      const response = await fetch(`${API_BASE}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: userMessage,
+          transcript: transcriptText,
+          videoTitle: video.title,
+          history: geminiHistory,
+        }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setChatMessages([...newMessages, { role: 'assistant', content: data.response }]);
+      } else {
+        setChatMessages([...newMessages, { role: 'assistant', content: '抱歉，人太多了，请稍后再试' }]);
+      }
+    } catch {
+      setChatMessages([...newMessages, { role: 'assistant', content: '抱歉，人太多了，请稍后再试' }]);
+    } finally {
+      setIsChatLoading(false);
+    }
+  };
+
+  const handleChatKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendChatMessage();
+    }
+  };
+
+  const handleCopy = (content: string, index: number) => {
+    navigator.clipboard.writeText(content);
+    setCopiedIndex(index);
+    setTimeout(() => setCopiedIndex(null), 1500);
+  };
+
+  const handleRegenerate = async (aiMsgIndex: number) => {
+    if (isChatLoading || !video) return;
+    const messagesBeforeAI = chatMessages.slice(0, aiMsgIndex);
+    const userMsg = messagesBeforeAI[messagesBeforeAI.length - 1];
+    if (!userMsg || userMsg.role !== 'user') return;
+
+    setChatMessages(messagesBeforeAI);
+    setIsChatLoading(true);
+
+    const transcriptText = video.transcriptParts?.map(p => p.en).join(' ') || '';
+    const geminiHistory = messagesBeforeAI.slice(1, -1).map(m => ({
+      role: m.role === 'user' ? 'user' : 'model',
+      parts: [{ text: m.content }],
+    }));
+
+    try {
+      const response = await fetch(`${API_BASE}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: userMsg.content,
+          transcript: transcriptText,
+          videoTitle: video.title,
+          history: geminiHistory,
+        }),
+      });
+      const data = await response.json();
+      const aiResponse = data.success ? data.response : '抱歉，人太多了，请稍后再试';
+      setChatMessages([...messagesBeforeAI, { role: 'assistant', content: aiResponse }]);
+    } catch {
+      setChatMessages([...messagesBeforeAI, { role: 'assistant', content: '抱歉，人太多了，请稍后再试' }]);
+    } finally {
+      setIsChatLoading(false);
+    }
+  };
 
   // YouTube Player ready handler
   const onPlayerReady = (event: YouTubeEvent) => {
@@ -286,7 +397,6 @@ const VideoDetail: React.FC = () => {
     };
   }, []);
 
-  // Fullscreen change listener
   useEffect(() => {
     if (screenfull.isEnabled) {
       const handleChange = () => setIsFullscreen(screenfull.isFullscreen);
@@ -301,7 +411,6 @@ const VideoDetail: React.FC = () => {
     }
   }, []);
 
-  // Calculate active segment index
   const activeSegmentIndex = video?.transcriptParts?.findIndex((part, idx, arr) => {
     const nextPart = arr[idx + 1];
     if (currentTime >= part.startTime && currentTime < part.endTime) return true;
@@ -309,22 +418,38 @@ const VideoDetail: React.FC = () => {
     return false;
   }) ?? -1;
 
-  // Find current subtitle
   const currentSubtitle = video?.transcriptParts?.find(
     (part) => part.startTime <= currentTime && part.endTime >= currentTime
   );
 
-  // Auto-scroll
+  // 字幕分页：长句按时间比例分两页显示
+  let subtitleText = currentSubtitle?.zh ?? '';
+  let subtitlePageKey = 0;
+  if (currentSubtitle?.zh) {
+    const pages = splitSubtitle(currentSubtitle.zh);
+    if (pages) {
+      const duration = currentSubtitle.endTime - currentSubtitle.startTime;
+      const splitRatio = pages[0].length / currentSubtitle.zh.length;
+      const splitTime = currentSubtitle.startTime + duration * splitRatio;
+      if (currentTime >= splitTime) {
+        subtitleText = pages[1];
+        subtitlePageKey = 1;
+      } else {
+        subtitleText = pages[0];
+        subtitlePageKey = 0;
+      }
+    }
+  }
+
   useEffect(() => {
-    if (activeSegmentIndex >= 0 && transcriptRefs.current[activeSegmentIndex]) {
-      transcriptRefs.current[activeSegmentIndex]?.scrollIntoView({
-        behavior: 'smooth',
-        block: 'start',
-      });
+    const el = transcriptRefs.current[activeSegmentIndex];
+    const container = scrollContainerRef.current;
+    if (activeSegmentIndex >= 0 && el && container) {
+      const targetScrollTop = el.offsetTop - 80;
+      container.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
     }
   }, [activeSegmentIndex]);
 
-  // Progress bar interaction
   const handleProgressMove = useCallback(async (e: MouseEvent | React.MouseEvent) => {
     if (!progressBarRef.current || !video) return;
     const rect = progressBarRef.current.getBoundingClientRect();
@@ -359,22 +484,6 @@ const VideoDetail: React.FC = () => {
     }
   }, [isDragging, handleProgressMove]);
 
-  const toggleBookmark = (h: Highlight) => {
-    const exists = bookmarks.find(b => b.term === h.text);
-    if (exists) {
-      setBookmarks(bookmarks.filter(b => b.term !== h.text));
-    } else {
-      setBookmarks([...bookmarks, {
-        id: Math.random().toString(36).substr(2, 9),
-        term: h.text,
-        definition: h.definition,
-        type: h.type,
-      }]);
-    }
-  };
-
-  const isHighlightBookmarked = (h: Highlight) => bookmarks.some(b => b.term === h.text);
-
   const renderTextWithHighlights = (text: string, highlights: Highlight[]) => {
     let parts: React.ReactNode[] = [];
     let lastIndex = 0;
@@ -389,8 +498,8 @@ const VideoDetail: React.FC = () => {
             key={i}
             text={h.text}
             highlight={h}
-            isBookmarked={isHighlightBookmarked(h)}
-            onToggleBookmark={() => toggleBookmark(h)}
+            isBookmarked={false}
+            onToggleBookmark={() => {}}
           />
         );
         lastIndex = index + h.text.length;
@@ -409,7 +518,6 @@ const VideoDetail: React.FC = () => {
     }
   };
 
-  // Format time display
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60);
     const s = Math.floor(seconds % 60);
@@ -432,17 +540,15 @@ const VideoDetail: React.FC = () => {
     },
   };
 
-  const panelTabs = [
-    { key: 'transcript', label: 'Transcript' },
-    { key: 'bookmark', label: 'Bookmarks' },
-  ];
 
   return (
     <div className="min-h-screen bg-warm-50">
-      <Header />
+      {showQuiz && video?.quiz && video.quiz.length > 0 && (
+        <QuizModal questions={video.quiz} onClose={() => setShowQuiz(false)} />
+      )}
+      <Header transparent back />
 
       <main className="container mx-auto px-4 sm:px-6 py-8 animate-page-enter max-w-[95vw] 2xl:max-w-[1800px]">
-        {/* Video Title */}
         <h1 className="text-xl md:text-2xl font-medium text-warm-800 mb-5 leading-snug">
           {video.title}
         </h1>
@@ -470,19 +576,15 @@ const VideoDetail: React.FC = () => {
               <div className={`absolute left-1/2 -translate-x-1/2 w-[80%] text-center z-30 pointer-events-none flex flex-col justify-end min-h-[4rem] ${
                 isFullscreen ? 'bottom-20' : 'bottom-16'
               }`}>
-                {showCn && currentSubtitle && currentSubtitle.zh && (
-                  <div className="relative overflow-hidden">
-                    <p
-                      key={currentSubtitle.startTime}
-                      className={`font-medium text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] line-clamp-2 animate-slideUp ${
-                        isFullscreen ? 'text-xl md:text-2xl' : 'text-xl md:text-2xl'
-                      }`}
-                    >
-                      <span className="bg-black/40 backdrop-blur-sm px-3 py-1.5 rounded-lg box-decoration-clone leading-relaxed">
-                        {currentSubtitle.zh}
-                      </span>
-                    </p>
-                  </div>
+                {showCn && currentTime > 0 && currentSubtitle && subtitleText && (
+                  <p
+                    key={`${currentSubtitle.startTime}-${subtitlePageKey}`}
+                    className="font-medium text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] animate-slideUp text-xl md:text-2xl"
+                  >
+                    <span className="bg-black/40 backdrop-blur-sm px-3 py-1.5 rounded-lg box-decoration-clone leading-relaxed">
+                      {subtitleText}
+                    </span>
+                  </p>
                 )}
               </div>
 
@@ -521,7 +623,6 @@ const VideoDetail: React.FC = () => {
                   const endPercent = (seg.endTime / totalDuration) * 100;
                   const isPast = progress >= endPercent;
                   const isActive = progress >= startPercent && progress < endPercent;
-                  const isFuture = progress < startPercent;
                   const partialWidth = isActive
                     ? ((progress - startPercent) / (endPercent - startPercent)) * 100
                     : 0;
@@ -546,7 +647,6 @@ const VideoDetail: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Chapter title */}
                       <div
                         className={`relative flex items-start mt-2 min-w-0 ${i > 0 ? 'border-l border-warm-200 pl-2' : ''}`}
                         onMouseEnter={() => setHoveredLabelIndex(i)}
@@ -557,12 +657,10 @@ const VideoDetail: React.FC = () => {
                         }`}>
                           {seg.title}
                         </span>
-                        {hoveredLabelIndex === i && (
-                          <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 z-50 w-max max-w-[240px] px-4 py-2 bg-white rounded-xl shadow-lg border border-warm-200/60 text-sm font-medium text-warm-700 text-center leading-relaxed animate-scale-in">
-                            {seg.title}
-                            <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-white border-t border-l border-warm-200/60 rotate-45" />
-                          </div>
-                        )}
+                        <div className={`absolute top-full left-1/2 -translate-x-1/2 mt-2 z-50 w-max max-w-[240px] px-4 py-2 bg-white rounded-xl shadow-lg border border-warm-200/60 text-sm font-medium text-warm-700 text-center leading-relaxed pointer-events-none transition-opacity duration-150 ${hoveredLabelIndex === i ? 'opacity-100' : 'opacity-0'}`}>
+                          {seg.title}
+                          <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-white border-t border-l border-warm-200/60 rotate-45" />
+                        </div>
                       </div>
                     </div>
                   );
@@ -572,25 +670,38 @@ const VideoDetail: React.FC = () => {
           </div>
 
           {/* Right Column: Learning Panel */}
-          <div className="w-full lg:w-[420px] xl:w-[480px] 2xl:w-[520px] flex-shrink-0 flex flex-col h-[calc(100vh-140px)] sticky top-24">
-            <div className="bg-white border border-warm-200/60 rounded-2xl flex flex-col h-full shadow-sm overflow-hidden">
+          <div className="w-full lg:w-[420px] xl:w-[480px] 2xl:w-[520px] flex-shrink-0 flex flex-col h-[calc(100vh-140px)] min-h-0 sticky top-24">
+            <div className="bg-white border border-warm-200/60 rounded-2xl flex flex-col h-full min-h-0 shadow-sm overflow-hidden">
+
               {/* Tabs */}
-              <div className="px-6">
-                <Tabs
-                  tabs={panelTabs}
-                  activeKey={activeTab}
-                  onChange={setActiveTab}
-                />
+              <div className="flex-shrink-0 flex items-center border-b border-warm-200">
+                <button
+                  onClick={() => setActiveTab('transcript')}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-3.5 text-[13px] transition-all duration-150 ${
+                    activeTab === 'transcript' ? 'text-warm-900' : 'text-warm-400 hover:text-warm-600'
+                  }`}
+                >
+                  <Languages size={14} />
+                  Transcript
+                </button>
+                <button
+                  onClick={() => setActiveTab('chat')}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-3.5 text-[13px] transition-all duration-150 ${
+                    activeTab === 'chat' ? 'text-warm-900' : 'text-warm-400 hover:text-warm-600'
+                  }`}
+                >
+                  <MessageCircle size={14} />
+                  Chat
+                </button>
               </div>
 
-              {/* Content */}
-              <div
-                ref={scrollContainerRef}
-                className="flex-1 overflow-y-auto p-6 space-y-4 scroll-smooth font-source-han scrollbar-thin"
-              >
-                {/* Transcript Tab */}
-                {activeTab === 'transcript' && (
-                  video.transcriptParts ? (
+              {/* Transcript Tab */}
+              {activeTab === 'transcript' && (
+                <div
+                  ref={scrollContainerRef}
+                  className="flex-1 overflow-y-auto p-6 space-y-2 scroll-smooth font-source-han scrollbar-thin"
+                >
+                  {video.transcriptParts ? (
                     video.transcriptParts.map((part, idx) => {
                       const isActive = idx === activeSegmentIndex;
                       return (
@@ -599,71 +710,152 @@ const VideoDetail: React.FC = () => {
                           ref={el => transcriptRefs.current[idx] = el}
                           className={`leading-relaxed cursor-pointer transition-all duration-300 scroll-mt-6 rounded-lg px-3 py-2 -mx-3 ${
                             isActive
-                              ? 'border-l-2 border-accent bg-accent-light/50'
-                              : 'border-l-2 border-transparent hover:bg-warm-50'
+                              ? 'bg-warm-100'
+                              : 'hover:bg-warm-50'
                           }`}
                           onClick={() => handleTranscriptClick(part.startTime)}
                         >
-                          {/* Timestamp */}
-                          <span className="text-[10px] text-warm-400 font-mono mb-1 block">
-                            {formatTime(part.startTime)}
-                          </span>
-                          <div className={`leading-relaxed text-pretty transition-colors ${
+<div className={`leading-relaxed text-pretty transition-colors ${
                             isActive
-                              ? 'text-[15px] text-warm-800 font-medium'
-                              : 'text-[13px] font-normal text-warm-600'
+                              ? 'text-[14px] text-warm-800'
+                              : 'text-[13px] text-warm-600'
                           }`}>
                             {renderTextWithHighlights(part.en, part.highlights)}
                           </div>
-                          {showCn && (
-                            <div className={`leading-relaxed mt-1 transition-colors ${
-                              isActive
-                                ? 'text-[13px] text-warm-500 font-medium'
-                                : 'text-[13px] font-normal text-warm-400'
-                            }`}>
-                              {part.zh}
-                            </div>
-                          )}
+                          <div className={`leading-relaxed mt-1 transition-colors ${
+                            isActive
+                              ? 'text-[13px] text-warm-500'
+                              : 'text-[13px] text-warm-400'
+                          }`}>
+                            {part.zh}
+                          </div>
                         </div>
                       );
                     })
                   ) : (
                     <div className="flex flex-col items-center justify-center py-24 text-warm-300">
-                      <Loader2 className="animate-spin mb-4" size={32} />
-                      <p className="text-sm">Synthesizing insights...</p>
+                      <p className="text-sm">加载中…</p>
                     </div>
-                  )
-                )}
+                  )}
+                </div>
+              )}
 
-                {/* Bookmarks Tab */}
-                {activeTab === 'bookmark' && (
-                  <div className="space-y-4">
-                    {bookmarks.length > 0 ? (
-                      bookmarks.map((b) => (
-                        <div key={b.id} className="group border-b border-warm-200/60 pb-4 last:border-0">
-                          <div className="flex justify-between items-center mb-2">
-                            <span className={`font-bold text-sm ${b.type === 'language' ? 'text-[#C5221F]' : 'text-[#1A73E8]'}`}>
-                              {b.term}
-                            </span>
-                            <button
-                              onClick={() => setBookmarks(bookmarks.filter(item => item.id !== b.id))}
-                              className="text-accent hover:text-accent-hover transition-colors"
-                            >
-                              <BookmarkIcon size={14} fill="currentColor" />
+              {/* Chat Tab */}
+              {activeTab === 'chat' && (
+                <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+                  {/* Messages */}
+                  <div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
+                    {/* Example questions - scrolls with messages */}
+                    {((video?.example_questions ?? []).length > 0 || (video?.quiz && video.quiz.length > 0)) && (
+                      <div className="flex flex-col items-end gap-2 pb-5">
+                        {(video.example_questions ?? []).map((q, i) => (
+                          !sentQuestions.has(i) && (
+                            <button key={i}
+                              onClick={() => { setSentQuestions(prev => new Set([...prev, i])); sendChatMessage(q); }}
+                              className="chat-message-enter text-right text-[13px] text-warm-700 px-4 py-2.5 rounded-2xl rounded-br-sm border border-warm-200 hover:border-warm-400 hover:bg-warm-50 transition-all max-w-[90%] leading-snug"
+                              style={{ animationDelay: `${i * 80}ms` }}>
+                              {q}
                             </button>
-                          </div>
-                          <p className="text-xs text-warm-600 leading-relaxed">{b.definition}</p>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="text-center py-24 text-warm-300">
-                        <BookmarkIcon size={48} strokeWidth={1} className="mx-auto mb-4 opacity-50" />
-                        <p className="text-sm">Saved words appear here</p>
+                          )
+                        ))}
+                        {video?.quiz && video.quiz.length > 0 && (
+                          <button onClick={() => setShowQuiz(true)}
+                            className="chat-message-enter text-[13px] text-warm-700 px-4 py-2.5 rounded-2xl rounded-br-sm border border-warm-200 hover:border-warm-400 hover:bg-warm-50 transition-all"
+                            style={{ animationDelay: `${(video.example_questions?.length ?? 0) * 80}ms` }}>
+                            测试一下 ✏️
+                          </button>
+                        )}
                       </div>
                     )}
+                    {/* Chat messages */}
+                    <div className="space-y-5">
+                      {chatMessages.map((msg, idx) => (
+                        <div key={idx} className="flex flex-col gap-1.5 chat-message-enter">
+                          {/* AI 回答 */}
+                          {msg.role === 'assistant' && (
+                            <>
+                              <div className="text-[13px] leading-relaxed text-warm-700 prose-chat">
+                                <ReactMarkdown>{msg.content}</ReactMarkdown>
+                              </div>
+                              <div className="flex items-center gap-0.5">
+                                <button
+                                  onClick={() => handleCopy(msg.content, idx)}
+                                  className="p-1.5 rounded-md hover:bg-warm-100 transition-colors text-warm-500"
+                                  title="复制"
+                                >
+                                  {copiedIndex === idx ? <Check size={13} /> : <Copy size={13} />}
+                                </button>
+                                <button
+                                  onClick={() => handleRegenerate(idx)}
+                                  className="p-1.5 rounded-md hover:bg-warm-100 transition-colors text-warm-500"
+                                  title="重新生成"
+                                >
+                                  <RotateCcw size={13} />
+                                </button>
+                              </div>
+                            </>
+                          )}
+
+                          {/* 用户气泡 */}
+                          {msg.role === 'user' && (
+                            <div className="flex justify-end">
+                              <div className="max-w-[85%] rounded-2xl rounded-tr-sm px-4 py-2.5 text-[13px] leading-relaxed bg-warm-100 text-warm-900">
+                                {msg.content}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* AI 建议问句 */}
+                          {msg.suggestions && msg.suggestions.length > 0 && (
+                            <div className="flex flex-col items-end gap-1.5 mt-1">
+                              {msg.suggestions.map((s, j) => (
+                                <button key={j} onClick={() => { setChatInput(s); }}
+                                  className="text-left text-[12px] px-3.5 py-1.5 rounded-full border border-warm-200 text-warm-500 hover:bg-warm-50 transition-colors">
+                                  {s}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+
+                      {/* Typing indicator */}
+                      {isChatLoading && (
+                        <div className="flex justify-start chat-message-enter">
+                          <div className="bg-warm-100 px-3.5 py-3 rounded-2xl rounded-bl-sm flex items-center gap-1.5">
+                            <div className="typing-dot" />
+                            <div className="typing-dot" />
+                            <div className="typing-dot" />
+                          </div>
+                        </div>
+                      )}
+                      <div ref={chatEndRef} />
+                    </div>
                   </div>
-                )}
-              </div>
+
+                  {/* Input */}
+                  <div className="flex-shrink-0 border-t border-warm-200/60 p-4">
+                    <div className="flex gap-2 items-end">
+                      <textarea
+                        value={chatInput}
+                        onChange={e => setChatInput(e.target.value)}
+                        onKeyDown={handleChatKeyDown}
+                        placeholder="你有什么想讨论的"
+                        className="flex-1 resize-none rounded-xl border border-warm-200 px-3 py-2 text-sm text-warm-800 placeholder:text-warm-300 focus:outline-none focus:border-accent/50 min-h-[40px] max-h-[120px] font-source-han"
+                        rows={1}
+                      />
+                      <button
+                        onClick={() => sendChatMessage()}
+                        disabled={!chatInput.trim() || isChatLoading}
+                        className="flex-shrink-0 w-9 h-9 rounded-full bg-[#1C1B1F] text-white flex items-center justify-center disabled:opacity-40 hover:bg-[#3C4043] transition-colors"
+                      >
+                        <Send size={16} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
             </div>
           </div>
         </div>

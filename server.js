@@ -86,7 +86,7 @@ if (!apiKey) {
 
 const fileManager = new GoogleAIFileManager(apiKey);
 const genAI = new GoogleGenerativeAI(apiKey);
-const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+const model = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview' });
 
 console.log('✅ Gemini API 初始化成功');
 
@@ -99,6 +99,298 @@ function formatTime(seconds) {
 
 // Mac Chrome User-Agent
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+// ========== 共用工具函数 ==========
+
+function cleanJsonResponse(text) {
+  let cleaned = text.trim();
+  cleaned = cleaned.replace(/^```(?:json)?\s*\n?/i, '');
+  cleaned = cleaned.replace(/\n?```\s*$/i, '');
+  return cleaned.trim();
+}
+
+// 将 VTT 时间戳（"HH:MM:SS.mmm"）转换为秒数
+function vttTimeToSeconds(ts) {
+  const clean = ts.trim().split(' ')[0];
+  const match = clean.match(/(\d{2}):(\d{2}):(\d{2})[.,](\d{3})/);
+  if (!match) return 0;
+  return parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseInt(match[3]) + parseInt(match[4]) / 1000;
+}
+
+// 解析 VTT 内容，处理 YouTube 滚动窗口去重，输出句子级别条目
+function parseVTT(vttContent) {
+  const blocks = vttContent.split(/\n\n+/);
+  const rawEntries = [];
+
+  for (const block of blocks) {
+    const lines = block.trim().split('\n');
+    const tsLine = lines.find(l => /\d{2}:\d{2}:\d{2}[.,]\d{3}\s+-->\s+\d{2}:\d{2}:\d{2}[.,]\d{3}/.test(l));
+    if (!tsLine) continue;
+
+    const parts = tsLine.split('-->');
+    const startTime = vttTimeToSeconds(parts[0].trim());
+    const endTime = vttTimeToSeconds(parts[1].trim());
+
+    const textLines = lines
+      .filter(l => l !== tsLine && !/^\d+$/.test(l.trim()) && l.trim())
+      .join(' ');
+
+    const text = textLines
+      .replace(/<\d{2}:\d{2}:\d{2}\.\d{3}>/g, '')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (text) rawEntries.push({ startTime, endTime, text });
+  }
+
+  if (rawEntries.length === 0) return [];
+
+  // 处理滚动窗口：提取每条 cue 相对上一条新增的文字
+  const wordEntries = [];
+  let prevText = '';
+
+  for (const entry of rawEntries) {
+    if (!prevText) {
+      wordEntries.push(entry);
+      prevText = entry.text;
+      continue;
+    }
+
+    const prevWords = prevText.split(/\s+/);
+    const currWords = entry.text.split(/\s+/);
+
+    let overlapLen = 0;
+    for (let len = Math.min(prevWords.length, currWords.length); len >= 1; len--) {
+      const suffix = prevWords.slice(prevWords.length - len).join(' ').toLowerCase();
+      const prefix = currWords.slice(0, len).join(' ').toLowerCase();
+      if (suffix === prefix) { overlapLen = len; break; }
+    }
+
+    const newWords = currWords.slice(overlapLen).join(' ').trim();
+    if (newWords) wordEntries.push({ ...entry, text: newWords });
+    prevText = entry.text;
+  }
+
+  // 按句子边界（. ! ?）合并成完整句子
+  const sentences = [];
+  let buffer = '';
+  let sentStart = null;
+  let sentEnd = null;
+
+  for (const entry of wordEntries) {
+    if (sentStart === null) sentStart = entry.startTime;
+    buffer = buffer ? buffer + ' ' + entry.text : entry.text;
+    sentEnd = entry.endTime;
+
+    if (/[.!?](\s|$)/.test(buffer)) {
+      sentences.push({ en: buffer.trim(), start: formatTime(sentStart), end: formatTime(sentEnd) });
+      buffer = '';
+      sentStart = null;
+      sentEnd = null;
+    }
+  }
+
+  if (buffer.trim() && sentStart !== null) {
+    sentences.push({ en: buffer.trim(), start: formatTime(sentStart), end: formatTime(sentEnd || sentStart) });
+  }
+
+  return sentences;
+}
+
+// 用 yt-dlp 下载字幕，返回 VTT 内容字符串；无字幕返回 null
+async function downloadSubtitlesVTT(url, videoId) {
+  const outputBase = path.join(tempDir, `sub_${videoId}`);
+  const cmd = `${YT_DLP} --write-sub --write-auto-sub --sub-lang "en" --sub-format vtt --skip-download ${COOKIES_FLAG} --user-agent "${USER_AGENT}" --js-runtimes node -o "${outputBase}" "${url}"`;
+
+  try {
+    await execAsync(cmd);
+  } catch (e) {
+    // yt-dlp 无字幕时会非零退出，继续检查文件
+  }
+
+  const files = fs.readdirSync(tempDir);
+  const vttFile = files.find(f => f.startsWith(`sub_${videoId}`) && f.endsWith('.vtt'));
+
+  if (vttFile) {
+    const content = fs.readFileSync(path.join(tempDir, vttFile), 'utf8');
+    fs.unlinkSync(path.join(tempDir, vttFile));
+    return content;
+  }
+
+  return null;
+}
+
+// 单批翻译：纠错英文 + 中文翻译（最多 50 句）
+async function translateBatch(batch, videoTitle, signal) {
+  // 只发英文原文，时间戳不需要 Gemini 处理
+  const input = batch.map(s => s.en);
+
+  const prompt = `输出要求：返回纯净的 JSON 数组，直接以 [ 开头、以 ] 结尾，不包含任何 Markdown 标记、前言或后记。
+
+你是一个资深的翻译专家和 AI 技术专家。以下是从视频字幕提取的英文句子列表，请完成以下任务：
+
+对每个输入句子进行翻译并纠正语音识别错误，返回与输入完全对应的列表。
+  - 必须包含输入中的每一条（共 ${input.length} 条），顺序一致，不可遗漏、合并或拆分
+  - "en"：纠正明显语音识别错误后的英文（仅改错词，保持句子结构）
+  - "cn"：地道的中文翻译（见下方翻译规范）
+
+翻译规范：
+  - 面向中国 AI 从业者，语言简洁，符合科技媒体阅读习惯
+  - AI、LLM 等已普及词汇直接使用
+  - 其他 AI 术语保留英文并首次出现时加括号注释，例如：fine-tuning（微调）
+  - 其余词汇翻译成地道中文
+
+视频标题：${videoTitle}
+
+输入数据（共 ${input.length} 条，必须全部输出）：
+${JSON.stringify(input)}`;
+
+  const textModel = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview' });
+
+  const result = await textModel.generateContent(prompt, { signal });
+  return result.response.text();
+}
+
+// 生成章节、问题、测验（使用纠错后英文）
+async function generateStructure(correctedSentences, videoTitle, signal) {
+  // 只发 start/end/en，cn 对章节/测验生成无用
+  const transcriptInput = correctedSentences.map(s => ({ start: s.start, end: s.end, en: s.en }));
+
+  const prompt = `输出要求：返回纯净的 JSON 对象，直接以 { 开头、以 } 结尾，不包含任何 Markdown 标记、前言或后记。
+
+你是一个资深的翻译专家和 AI 技术专家。以下是视频字幕文本（纠错后的英文），请完成以下任务：
+
+chapters：基于字幕全文，按内容主题划分逻辑章节，用于显示在进度条上。
+  - "title"：不超过 12 个字，直接描述核心内容，禁止冒号格式，禁止"第一部分"等标签
+  - "start" / "end"：格式 "MM:SS"，必须与某个 segment 的时间对齐
+  - 数量限制：5 到 8 个之间
+  - 时长限制：任何单章不得超过视频总时长的 20%
+  - 章节时间必须连续，不能有间隙
+
+example_questions：生成 3 个启发性问题，帮助用户深入探索视频内容。
+  - 中文，开放式，具体，不超过 25 字
+  - 覆盖概念理解和延伸思考两种类型
+  - 输出为字符串数组
+
+quiz：生成 5 道选择题，测验用户对视频核心内容的理解。
+  - "question"：题目（中文，不超过 30 字）
+  - "options"：4 个选项（中文字符串数组，不含 A/B/C/D 前缀）
+  - "answer"：正确答案的索引（0-3 的整数）
+  - "explanation"：解析（中文，2-3 句话）
+
+视频标题：${videoTitle}
+
+输入字幕数据（共 ${correctedSentences.length} 条）：
+${JSON.stringify(transcriptInput)}`;
+
+  const textModel = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview' });
+
+  const result = await textModel.generateContent(prompt, { signal });
+  return result.response.text();
+}
+
+// Gemini 文本分析：分批翻译 + 串行生成章节/问题/测验
+async function geminiTextAnalysis(sentences, videoTitle, signal) {
+  const BATCH_SIZE = 50;
+  const CONCURRENCY = 3;
+  const MAX_RETRIES = 3;
+
+  // 拆批，每批记录起始全局索引 startIndex，发给 Gemini 的数据不含全局 i
+  const batches = [];
+  for (let i = 0; i < sentences.length; i += BATCH_SIZE) {
+    batches.push({
+      startIndex: i,
+      items: sentences.slice(i, i + BATCH_SIZE).map(s => ({ start: s.start, end: s.end, en: s.en })),
+    });
+  }
+  console.log(`📦 共 ${sentences.length} 句，分 ${batches.length} 批（每批最多 ${BATCH_SIZE} 句），并发数 ${CONCURRENCY}`);
+
+  // 判断是否为限流错误
+  const is429 = (err) =>
+    err.status === 429 ||
+    err.message?.includes('429') ||
+    err.message?.includes('RESOURCE_EXHAUSTED') ||
+    err.message?.includes('quota');
+
+  // 单批翻译（带重试）
+  async function runBatchWithRetry(batch, batchIndex) {
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        const responseText = await translateBatch(batch.items, videoTitle, signal);
+        const result = JSON.parse(cleanJsonResponse(responseText));
+
+        if (!Array.isArray(result) || result.length !== batch.items.length) {
+          throw new Error(`返回数量不符：期望 ${batch.items.length}，实际 ${result.length}`);
+        }
+
+        console.log(`✅ 批次 ${batchIndex + 1}/${batches.length} 完成`);
+        return result;
+      } catch (err) {
+        const waitSecs = is429(err) ? Math.pow(2, attempt + 2) : Math.pow(2, attempt);
+        if (attempt < MAX_RETRIES - 1) {
+          console.warn(`⚠️ 批次 ${batchIndex + 1} 第 ${attempt + 1} 次失败${is429(err) ? '（限流）' : ''}，${waitSecs}s 后重试...`);
+          await new Promise(r => setTimeout(r, waitSecs * 1000));
+        } else {
+          throw new Error(`批次 ${batchIndex + 1} 重试耗尽: ${err.message}`);
+        }
+      }
+    }
+  }
+
+  // Step 1：分批翻译，每次最多 CONCURRENCY 批并发
+  const allSegments = new Array(sentences.length);
+  for (let i = 0; i < batches.length; i += CONCURRENCY) {
+    const chunk = batches.slice(i, i + CONCURRENCY);
+    const chunkResults = await Promise.all(
+      chunk.map((batch, j) => runBatchWithRetry(batch, i + j))
+    );
+    // 用 Promise.all 保证的顺序 + 批次起始位置自己算全局索引
+    // 时间戳强制用原始 VTT 数据，不信任 Gemini 返回的任何时间值
+    chunkResults.forEach((batchResult, j) => {
+      const batch = chunk[j];
+      batchResult.forEach((item, k) => {
+        allSegments[batch.startIndex + k] = {
+          en: item.en,
+          cn: item.cn,
+          start: batch.items[k].start,
+          end: batch.items[k].end,
+        };
+      });
+    });
+    console.log(`📊 翻译进度：${Math.min(i + CONCURRENCY, batches.length)}/${batches.length} 批完成`);
+  }
+  console.log(`✅ 全部翻译完成，共 ${allSegments.length} 句`);
+
+  // Step 2：用纠错后英文串行生成章节/问题/测验
+  console.log('🤖 开始生成章节、问题、测验...');
+  let structureResult;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const responseText = await generateStructure(allSegments, videoTitle, signal);
+      structureResult = JSON.parse(cleanJsonResponse(responseText));
+      console.log('✅ 章节/测验生成完成');
+      break;
+    } catch (err) {
+      const waitSecs = is429(err) ? Math.pow(2, attempt + 2) : Math.pow(2, attempt);
+      if (attempt < MAX_RETRIES - 1) {
+        console.warn(`⚠️ 章节/测验第 ${attempt + 1} 次失败${is429(err) ? '（限流）' : ''}，${waitSecs}s 后重试...`);
+        await new Promise(r => setTimeout(r, waitSecs * 1000));
+      } else {
+        throw new Error(`章节/测验生成失败: ${err.message}`);
+      }
+    }
+  }
+
+  // 合并返回（保持与旧接口一致：返回 JSON 字符串）
+  return JSON.stringify({
+    segments: allSegments,
+    chapters: structureResult.chapters,
+    example_questions: structureResult.example_questions,
+    quiz: structureResult.quiz,
+  });
+}
 
 // ========== yt-dlp 路径与 cookies 配置 ==========
 const YT_DLP = isProduction ? path.join(process.cwd(), 'bin', 'yt-dlp') : '/opt/homebrew/bin/yt-dlp';
@@ -124,6 +416,17 @@ app.post('/analyze', async (req, res) => {
   const { url } = req.body;
   let localFilePath = null;
   let uploadedFile = null;
+
+  // 创建取消控制器，客户端关闭窗口时中止所有 Gemini 请求
+  const controller = new AbortController();
+  const { signal } = controller;
+  let responseSent = false;
+  req.on('close', () => {
+    if (!responseSent) {
+      controller.abort();
+      console.log('🚫 客户端断开连接，已取消所有进行中的 Gemini 请求');
+    }
+  });
 
   try {
     if (!url) {
@@ -152,21 +455,6 @@ app.post('/analyze', async (req, res) => {
         upload_date: videoInfo.upload_date,
       };
 
-      // 检查 YouTube 原生章节
-      if (videoInfo.chapters && videoInfo.chapters.length > 0) {
-        metadata.chapters = videoInfo.chapters.map((chapter, index, arr) => ({
-          title: chapter.title,
-          start: formatTime(chapter.start_time),
-          end: formatTime(
-            chapter.end_time ||
-            (arr[index + 1]?.start_time) ||
-            videoInfo.duration
-          ),
-        }));
-        console.log(`✅ 检测到 YouTube 原生章节: ${metadata.chapters.length} 个`);
-      } else {
-        console.log('ℹ️  该视频没有 YouTube 原生章节，将由 AI 生成');
-      }
 
       console.log('✅ 元数据获取成功！');
       console.log('📺 标题:', metadata.title);
@@ -176,179 +464,51 @@ app.post('/analyze', async (req, res) => {
       console.warn('⚠️ 获取元数据失败，继续处理:', metaError.message);
     }
 
-    // ========== 第二步：下载音频 ==========
-    console.log('\n📥 ========== [3/6] 下载音频文件 ==========');
-    console.log('⏳ 正在下载，预计需要 5-15 分钟（取决于视频长度和网速）...');
-    console.log('💡 提示：可以去泡杯咖啡 ☕');
+    // ========== 第二步：尝试下载字幕（字幕优先路径）==========
+    console.log('\n📝 ========== [2/4] 尝试下载字幕 ==========');
 
-    const ytDlpCommand = `${YT_DLP} -f "ba" -x --audio-format mp3 ${COOKIES_FLAG} --user-agent "${USER_AGENT}" --js-runtimes node -o "${tempDir}/%(id)s.%(ext)s" "${url}"`;
-    const { stdout, stderr } = await execAsync(ytDlpCommand);
+    let analysisResult = null;
 
-    console.log('yt-dlp 输出:', stdout);
-    if (stderr) console.log('yt-dlp 错误信息:', stderr);
-
-    // 查找下载的文件
-    const files = fs.readdirSync(tempDir).filter(f => f.endsWith('.mp3'));
-    if (files.length === 0) {
-      throw new Error('音频下载失败，未找到 mp3 文件');
-    }
-
-    localFilePath = path.join(tempDir, files[0]);
-
-    // 检查文件大小
-    const stats = fs.statSync(localFilePath);
-    const fileSizeMB = (stats.size / 1024 / 1024).toFixed(2);
-
-    console.log('✅ 音频下载成功！');
-    console.log('📦 文件大小:', fileSizeMB, 'MB');
-    console.log('📁 临时路径:', localFilePath);
-
-    // ========== 第三步：上传到 Gemini ==========
-    console.log('\n☁️  ========== [4/6] 上传到 Gemini ==========');
-    console.log('📤 文件大小:', fileSizeMB, 'MB');
-    console.log('⏳ 正在上传，预计需要 3-10 分钟...');
-
-    uploadedFile = await fileManager.uploadFile(localFilePath, {
-      mimeType: 'audio/mpeg',
-      displayName: path.basename(localFilePath),
-    });
-
-    console.log('✅ 上传完成！');
-    console.log('🔗 文件 URI:', uploadedFile.file.uri);
-    console.log('📛 文件名称:', uploadedFile.file.displayName);
-
-    // ========== 第四步：等待文件处理完成 ==========
-    console.log('\n⏳ ========== [4.5/6] 等待 Gemini 处理文件 ==========');
-    console.log('💭 Gemini 正在处理音频文件...');
-    console.log('⏱️  预计需要 5-15 分钟（取决于文件大小）');
-
-    let file = await fileManager.getFile(uploadedFile.file.name);
-    while (file.state === 'PROCESSING') {
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      file = await fileManager.getFile(uploadedFile.file.name);
-      console.log('   状态:', file.state);
-    }
-
-    if (file.state !== 'ACTIVE') {
-      throw new Error(`文件处理失败，状态: ${file.state}`);
-    }
-
-    console.log('✅ Gemini 文件处理完成！');
-    console.log('📊 文件状态:', file.state);
-
-    // ========== 第五步：AI 分析 ==========
-    console.log('\n🤖 ========== [5/6] AI 音频分析 ==========');
-    console.log('🧠 这是最耗时的步骤，AI 正在：');
-    console.log('   - 转写音频为逐字稿');
-    console.log('   - 翻译成中文');
-    console.log('   - 提取重点词汇和术语');
-    console.log('   - 生成智能章节');
-    console.log('');
-    console.log('⏱️  预估时间：');
-    console.log('   - 1小时视频：约 15-25 分钟');
-    console.log('   - 3小时视频：约 40-60 分钟');
-    console.log('');
-    console.log('💡 建议：去做其他事情，无需等待在电脑前');
-    console.log('⏰ 当前时间:', new Date().toLocaleString('zh-CN'));
-
-    const systemPrompt = `你是一个资深的语言学家和 AI 技术专家。请分析这段音频，并严格按照 JSON 格式输出：
-
-segments: 将逐字稿按逻辑分段（不要太长，每段 2-4 句话）。你必须根据音频内容，精准标记每一句话的起止时间。
-  - "en": 英文原文。
-  - "cn": 对应地道的中文翻译。
-  - "start": 开始时间 (格式为 "MM:SS", 例如 "00:15")
-  - "end": 结束时间 (格式为 "MM:SS", 例如 "00:25")
-
-chapters: 将音频按内容主题划分为逻辑章节，用于显示在进度条上。
-  - "title": 章节标题（简洁明了，3-8 个字）
-  - "start": 开始时间 (格式为 "MM:SS")
-  - "end": 结束时间 (格式为 "MM:SS")
-  - 章节数量限制（根据视频总时长）：
-    - 视频时长 < 1小时（60分钟）：最多 10 个章节
-    - 视频时长 1-1.5小时（60-90分钟）：最多 12 个章节
-    - 视频时长 1.5-2.5小时（90-150分钟）：最多 14 个章节
-    - 视频时长 > 2.5小时（150分钟以上）：最多 15 个章节
-  - 分段原则：
-    - 基于内容主题进行逻辑分段，每章应该是一个完整的话题或论点
-    - 优先在重要主题转换点、论点切换处分章，而非机械地平均分配时间
-    - 章节之间时间必须连续，不能有间隙
-
-red_list (高价值英语表达 - 严选):
-  - 筛选标准: 提取高价值的英语表达，必须同时包含以下两类：
-    1. 高级单词 (Advanced Vocabulary): C1/C2 难度、GRE/TOEFL 级别、学术性或极具表现力的单个单词。
-    2. 地道短语 (Idioms/Phrases): 母语者常用的习语、搭配或口语化隐喻。
-  - 正确示例: "nuance", "mitigate", "scrutinize", "leverage", "counterintuitive", "flesh out", "move the needle", "low hanging fruit"
-  - 错误示例 (绝对不要选):
-    - 简单词汇: "use", "good", "make", "problem", "task", "example", "data", "model", "system"
-    - 单个字母缩写: "AI", "ML", "IT", "API" 等
-    - 过于基础的技术词: "computer", "software", "internet", "code"
-  - 每个单词/短语只能出现一次，即使在视频中多次提到
-  - 字段说明 (必须严格遵守):
-    - word: 单词或短语原文
-    - pronunciation: 音标（使用 IPA 国际音标）
-    - definition_cn: 中文释义（必须解释它在当前语境下的言外之意或微妙语气，而不仅仅是字典定义）
-    - example: 必须造一个全新的的英文例句来展示该单词的用法。严禁直接复制视频字幕中的原句。例句应通俗易懂，有助于初学者理解。
-    - example_cn: 将上述新造的英文例句翻译成地道的中文。
-
-blue_list (行业术语 - 严选):
-  - 筛选标准: 提取真正有学习价值的专业术语（如 "Context Window", "RAG", "Inference", "Fine-tuning"）
-  - 错误示例 (绝对不要选):
-    - 单个字母缩写: "AI", "ML", "NLP", "GPU", "API"
-    - 过于基础的词: "data", "model", "algorithm", "computer", "software"
-    - 通用技术词: "website", "app", "cloud", "database"
-  - 每个术语只能出现一次，即使在视频中多次提到
-  - 字段: term, definition_cn
-
-注意：不要生成全文摘要。输出必须是纯净的 JSON，不要包含 Markdown 标记。
-
-**CRITICAL: Output MUST be a single, valid JSON object. DO NOT include any markdown formatting (like \`\`\`json), preamble, or postscript. Start directly with { and end with }.**`;
-
-    const result = await model.generateContent([
-      {
-        fileData: {
-          mimeType: uploadedFile.file.mimeType,
-          fileUri: uploadedFile.file.uri,
-        },
-      },
-      { text: systemPrompt },
-    ]);
-
-    const responseText = result.response.text();
-    console.log('\n✅ ========== AI 分析完成！==========');
-    console.log('⏰ 完成时间:', new Date().toLocaleString('zh-CN'));
-    console.log('📄 原始响应:', responseText.substring(0, 500) + '...');
-
-    // 强化 JSON 清洗函数
-    function cleanJsonResponse(text) {
-      let cleaned = text.trim();
-      cleaned = cleaned.replace(/^```(?:json)?\s*\n?/i, '');
-      cleaned = cleaned.replace(/\n?```\s*$/i, '');
-      cleaned = cleaned.trim();
-      return cleaned;
-    }
-
-    // 清洗响应文本
-    const jsonText = cleanJsonResponse(responseText);
-
-    // 尝试解析 JSON，增强错误处理
-    let analysisResult;
     try {
-      analysisResult = JSON.parse(jsonText);
-      console.log('✅ JSON 解析成功！');
-      console.log('📊 分析结果统计：');
-      console.log('   - 字幕段落数:', analysisResult.segments?.length || 0);
-      console.log('   - 重点词汇数:', analysisResult.red_list?.length || 0);
-      console.log('   - 专业术语数:', analysisResult.blue_list?.length || 0);
-      console.log('   - 章节数:', analysisResult.chapters?.length || 0);
-    } catch (parseError) {
-      console.error('❌ JSON 解析失败！');
-      console.error('解析错误:', parseError.message);
-      console.error('------- 原始返回内容 (前 1000 字符) -------');
-      console.error(responseText.substring(0, 1000));
-      console.error('------- 清洗后内容 (前 1000 字符) -------');
-      console.error(jsonText.substring(0, 1000));
-      console.error('------------------------------------------');
-      throw new Error(`JSON 解析失败: ${parseError.message}`);
+      const vttContent = await downloadSubtitlesVTT(url, metadata.id || `tmp_${Date.now()}`);
+
+      if (vttContent) {
+        const sentences = parseVTT(vttContent);
+        console.log(`✅ 字幕解析成功，共 ${sentences.length} 个句子`);
+
+        if (sentences.length >= 5) {
+          // ========== 第三步：Gemini 文本分析 ==========
+          console.log('\n🤖 ========== [3/4] AI 文本分析（字幕路径）==========');
+          console.log(`📄 输入：${sentences.length} 个句子`);
+          console.log('⏳ 正在翻译并生成章节、问题、测验...');
+          console.log('⏰ 开始时间:', new Date().toLocaleString('zh-CN'));
+
+          const responseText = await geminiTextAnalysis(sentences, metadata.title || '', signal);
+          console.log('\n✅ Gemini 文本分析完成！');
+          console.log('⏰ 完成时间:', new Date().toLocaleString('zh-CN'));
+
+          const jsonText = cleanJsonResponse(responseText);
+
+          try {
+            analysisResult = JSON.parse(jsonText);
+            console.log('✅ JSON 解析成功！');
+            console.log(`📊 字幕段数: ${analysisResult.segments?.length || 0}，章节数: ${analysisResult.chapters?.length || 0}`);
+          } catch (parseError) {
+            console.error('❌ JSON 解析失败:', parseError.message);
+            console.error('原始响应前 500 字符:', responseText.substring(0, 500));
+            throw new Error(`JSON 解析失败: ${parseError.message}`);
+          }
+        } else {
+          console.log(`⚠️ 字幕句子数量不足（${sentences.length}）`);
+          return res.status(400).json({ success: false, error: '该视频字幕内容过少，无法分析，请换一个视频试试。' });
+        }
+      } else {
+        console.log('⚠️ 未找到英文字幕');
+        return res.status(400).json({ success: false, error: '该视频没有英文字幕，暂不支持分析。' });
+      }
+    } catch (subtitleError) {
+      console.log('❌ 字幕分析失败:', subtitleError.message);
+      return res.status(503).json({ success: false, error: `分析失败，请稍后重试。（${subtitleError.message}）` });
     }
 
     // ========== 第六步：清理资源 ==========
@@ -366,27 +526,23 @@ blue_list (行业术语 - 严选):
       console.log('✅ 已删除云端文件:', uploadedFile.file.name);
     }
 
-    // 处理 chapters：优先使用 YouTube 原生章节，否则使用 AI 生成的
-    let finalChapters;
-    if (metadata.chapters && metadata.chapters.length > 0) {
-      finalChapters = metadata.chapters;
-      console.log('📍 使用 YouTube 原生章节');
-    } else if (analysisResult.chapters && analysisResult.chapters.length > 0) {
-      finalChapters = analysisResult.chapters;
-      console.log('📍 使用 AI 生成的章节');
-    } else {
-      finalChapters = [];
-      console.log('⚠️ 未获取到章节信息');
-    }
+    // 使用 AI 生成的章节，补全缺失的 end 字段
+    const rawChapters = analysisResult.chapters || [];
+    const finalChapters = rawChapters.map((ch, i) => ({
+      ...ch,
+      end: ch.end || rawChapters[i + 1]?.start || ch.start,
+    }));
+    console.log('📍 使用 AI 生成的章节:', finalChapters.length, '个');
 
     // 返回结果（包含元数据和章节）
+    responseSent = true;
     res.json({
       success: true,
       data: {
         segments: analysisResult.segments,
         chapters: finalChapters,
-        red_list: analysisResult.red_list,
-        blue_list: analysisResult.blue_list,
+        example_questions: analysisResult.example_questions || [],
+        quiz: analysisResult.quiz || [],
       },
       metadata: metadata,
     });
@@ -418,6 +574,36 @@ blue_list (行业术语 - 严选):
       stack: error.stack,
       details: 'Backend Error Log',
     });
+  }
+});
+
+// ========== Chat API ==========
+app.post('/chat', async (req, res) => {
+  const { message, transcript, videoTitle, history } = req.body;
+
+  if (!message) {
+    return res.status(400).json({ success: false, error: '缺少消息内容' });
+  }
+
+  try {
+    const chatModel = genAI.getGenerativeModel({
+      model: 'gemini-3-flash-preview',
+      systemInstruction: `你是一个专业的学习助手，帮助用户深入理解视频内容。当前视频标题："${videoTitle}"。
+
+以下是视频的完整文字记录（英文原文）：
+
+${transcript}
+
+请基于以上视频内容回答用户的问题，帮助他们学习和理解视频中的知识点。回答要简洁清晰，用中文回复。如果问题超出视频内容范围，可适当补充背景知识并注明。`,
+    });
+
+    const chat = chatModel.startChat({ history: history || [] });
+    const result = await chat.sendMessage(message);
+
+    res.json({ success: true, response: result.response.text() });
+  } catch (error) {
+    console.error('❌ Chat 错误:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

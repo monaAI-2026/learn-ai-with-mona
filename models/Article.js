@@ -12,7 +12,7 @@ const SegmentSchema = new mongoose.Schema({
 const ChapterSchema = new mongoose.Schema({
   title: { type: String, required: true },
   start: { type: String, required: true },
-  end: { type: String, required: true },
+  end: { type: String, default: '' },
 }, { _id: false });
 
 // 红色词汇表 (地道表达/高级词汇)
@@ -40,6 +40,14 @@ const MetadataSchema = new mongoose.Schema({
   chapters: [ChapterSchema],
 }, { _id: false });
 
+// Quiz 题目 Schema
+const QuizQuestionSchema = new mongoose.Schema({
+  question: { type: String, required: true },
+  options: [{ type: String }],
+  answer: { type: Number, required: true },
+  explanation: { type: String },
+}, { _id: false });
+
 // 主 Article Schema
 const ArticleSchema = new mongoose.Schema({
   // 使用自定义 id 而非默认 _id（兼容旧数据）
@@ -52,6 +60,10 @@ const ArticleSchema = new mongoose.Schema({
   chapters: [ChapterSchema],
   red_list: [RedListItemSchema],
   blue_list: [BlueListItemSchema],
+
+  // AI 生成内容
+  example_questions: [{ type: String }],
+  quiz: [QuizQuestionSchema],
 
   // 元数据
   metadata: MetadataSchema,

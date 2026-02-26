@@ -7,7 +7,7 @@ export const MOCK_VIDEOS: Video[] = [
     youtubeId: '7xTGNNLPyMI',
     title: 'Ben Horowitz: The AI Revolution and the Future of Software',
     description: 'A deep conversation about how AI is fundamentally changing the architecture of modern software and the role of the founder.',
-    categories: ['Founder Interview', 'Technical'],
+    categories: ['Founder Interview', 'AI Fundamentals'],
     thumbnail: 'https://i.ytimg.com/vi/7xTGNNLPyMI/maxresdefault.jpg',
     duration: '45:20',
     segments: [
@@ -46,7 +46,7 @@ export const MOCK_VIDEOS: Video[] = [
     youtubeId: '2-S6Tls_7Sg',
     title: 'The Future of AI Agents and Autonomous Systems',
     description: 'Exploring how LLMs are evolving into agents that can take actions in the real world.',
-    categories: ['Technical', 'Product'],
+    categories: ['AI Fundamentals', 'Product'],
     thumbnail: 'https://picsum.photos/seed/ai2/800/450',
     duration: '18:20'
   }

@@ -1,5 +1,5 @@
 
-export type Category = 'Product' | 'Founder Interview' | 'Technical' | 'AI News' | 'Tutorial';
+export type Category = 'Product' | 'Founder Interview' | 'Tutorial' | 'Vibe Coding' | 'Marketing' | 'AI Fundamentals';
 
 export interface Segment {
   startTime: number;
@@ -15,12 +15,20 @@ export interface Highlight {
   phonetic?: string;
   translation: string;
   example?: string;
+  example_cn?: string;
 }
 
 export interface TranscriptPart {
   en: string;
   zh: string;
   highlights: Highlight[];
+}
+
+export interface QuizQuestion {
+  question: string;
+  options: string[];
+  answer: number;
+  explanation: string;
 }
 
 export interface Video {
@@ -33,6 +41,8 @@ export interface Video {
   duration: string;
   transcriptParts?: TranscriptPart[];
   segments?: Segment[];
+  example_questions?: string[];
+  quiz?: QuizQuestion[];
 }
 
 export interface Bookmark {

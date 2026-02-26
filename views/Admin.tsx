@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Trash2, Eye, EyeOff, Plus, X } from 'lucide-react';
+import { Trash2, Eye, EyeOff, Plus, X, Check } from 'lucide-react';
 import type { Category } from '../types';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
@@ -19,16 +19,8 @@ interface Segment {
 
 interface AnalysisResult {
   segments: Segment[];
-  red_list: Array<{
-    word: string;
-    pronunciation: string;
-    definition_cn: string;
-    example: string;
-  }>;
-  blue_list: Array<{
-    term: string;
-    definition_cn: string;
-  }>;
+  example_questions?: string[];
+  quiz?: import('../types').QuizQuestion[];
 }
 
 interface VideoMetadata {
@@ -51,10 +43,19 @@ interface VideoItem {
 
 type FilterType = 'all' | 'published' | 'hidden';
 
-const CATEGORIES: Category[] = ['Product', 'Founder Interview', 'Technical', 'Tutorial', 'AI News'];
+const CATEGORIES: Category[] = ['Product', 'Founder Interview', 'Tutorial', 'Vibe Coding', 'Marketing', 'AI Fundamentals'];
+
+const CATEGORY_COLORS: Record<Category, { bg: string; text: string; border: string }> = {
+  'Product':           { bg: '#E6F4EAB3', text: '#137333B3', border: '#CEEAD6B3' },
+  'Founder Interview': { bg: '#F3E8FDB3', text: '#7B1FA2B3', border: '#E9D5F7B3' },
+  'Tutorial':          { bg: '#E3F5FBB3', text: '#007B7AB3', border: '#C1E9F3B3' },
+  'Vibe Coding':       { bg: '#FCE8F0B3', text: '#C2185BB3', border: '#F7C5D8B3' },
+  'Marketing':         { bg: '#FEF0E6B3', text: '#C35100B3', border: '#FCD3A8B3' },
+  'AI Fundamentals':   { bg: '#E8F0FEB3', text: '#1A73E8B3', border: '#AECBFAB3' },
+};
 
 // API Base URL - 支持环境变量配置
-const API_BASE = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3001`;
+const API_BASE = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3099`;
 
 // 高亮渲染辅助函数
 const renderSentence = (segment: Segment): React.ReactNode => {
@@ -161,7 +162,7 @@ const VideoInputModal: React.FC<VideoInputModalProps> = ({
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="https://www.youtube.com/watch?v=..."
-            className="w-full px-4 py-3 border border-warm-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent bg-warm-50 transition-colors"
+            className="w-full px-4 py-3 border border-warm-200 rounded-xl focus:outline-none focus:border-warm-600 bg-warm-50 transition-colors"
             disabled={loading}
             autoFocus
           />
@@ -284,8 +285,8 @@ const AddCard: React.FC<AddCardProps> = ({ onClick }) => {
 // 分析结果面板组件
 interface AnalysisResultPanelProps {
   result: AnalysisResult;
-  category: Category;
-  setCategory: (cat: Category) => void;
+  categories: Category[];
+  setCategories: (cats: Category[]) => void;
   isSaving: boolean;
   onSave: () => void;
   onClose: () => void;
@@ -293,17 +294,23 @@ interface AnalysisResultPanelProps {
 
 const AnalysisResultPanel: React.FC<AnalysisResultPanelProps> = ({
   result,
-  category,
-  setCategory,
+  categories,
+  setCategories,
   isSaving,
   onSave,
   onClose,
 }) => {
+  const toggleCategory = (cat: Category) => {
+    setCategories(
+      categories.includes(cat)
+        ? categories.filter((c) => c !== cat)
+        : [...categories, cat]
+    );
+  };
   const [activeTab, setActiveTab] = useState('transcript');
 
   const tabs = [
     { key: 'transcript', label: '字幕文本' },
-    { key: 'vocabulary', label: '重点词汇' },
   ];
 
   return (
@@ -324,18 +331,26 @@ const AnalysisResultPanel: React.FC<AnalysisResultPanelProps> = ({
           {/* Category + Publish */}
           <div className="px-6 py-3 border-b border-warm-200/60 bg-warm-50/50">
             <div className="flex items-center justify-between gap-4">
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value as Category)}
-                className="w-48 px-3 py-2 text-sm border border-warm-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent bg-white transition-colors"
-                disabled={isSaving}
-              >
-                {CATEGORIES.map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat}
-                  </option>
-                ))}
-              </select>
+              <div className="flex flex-wrap gap-1.5">
+                {CATEGORIES.map((cat) => {
+                  const selected = categories.includes(cat);
+                  const colors = CATEGORY_COLORS[cat];
+                  return (
+                    <button
+                      key={cat}
+                      onClick={() => toggleCategory(cat)}
+                      disabled={isSaving}
+                      className="text-xs font-medium px-3 py-1 rounded-full border transition-all"
+                      style={selected
+                        ? { background: colors.bg, color: colors.text, borderColor: colors.border }
+                        : { background: 'white', color: '#9CA3AF', borderColor: '#E5E7EB' }
+                      }
+                    >
+                      {cat}
+                    </button>
+                  );
+                })}
+              </div>
               <Button
                 variant="primary"
                 onClick={onSave}
@@ -372,61 +387,6 @@ const AnalysisResultPanel: React.FC<AnalysisResultPanelProps> = ({
               </div>
             )}
 
-            {activeTab === 'vocabulary' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Red List */}
-                <div className="bg-[#FCE8E6] rounded-xl p-5 border border-[#F28B82]/20">
-                  <h4 className="text-lg font-medium text-[#C5221F] mb-4">
-                    地道表达/习语
-                  </h4>
-                  <div className="space-y-3">
-                    {result.red_list.map((item, idx) => (
-                      <div
-                        key={idx}
-                        className="bg-white rounded-xl p-3 border border-[#F28B82]/10"
-                      >
-                        <div className="font-semibold text-warm-800">
-                          {item.word}
-                          <span className="text-sm text-warm-400 ml-2">
-                            {item.pronunciation}
-                          </span>
-                        </div>
-                        <div className="text-sm text-warm-600 mb-1">
-                          {item.definition_cn}
-                        </div>
-                        {item.example && (
-                          <div className="text-xs text-warm-500 italic">
-                            例句: {item.example}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Blue List */}
-                <div className="bg-[#E8F0FE] rounded-xl p-5 border border-[#A8C7FA]/20">
-                  <h4 className="text-lg font-medium text-[#1A73E8] mb-4">
-                    专业术语/行业黑话
-                  </h4>
-                  <div className="space-y-3">
-                    {result.blue_list.map((item, idx) => (
-                      <div
-                        key={idx}
-                        className="bg-white rounded-xl p-3 border border-[#A8C7FA]/10"
-                      >
-                        <div className="font-semibold text-warm-800">
-                          {item.term}
-                        </div>
-                        <div className="text-sm text-warm-600 mt-1">
-                          {item.definition_cn}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -463,10 +423,15 @@ const Admin: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [metadata, setMetadata] = useState<VideoMetadata | null>(null);
-  const [category, setCategory] = useState<Category>('Technical');
+  const [categories, setCategories] = useState<Category[]>([]);
   const [isSaving, setIsSaving] = useState(false);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [toast, setToast] = useState<{ message: string; success: boolean } | null>(null);
+  const showToast = (message: string, success = true) => {
+    setToast({ message, success });
+    setTimeout(() => setToast(null), 2500);
+  };
   const [filter, setFilter] = useState<FilterType>('all');
   const [videos, setVideos] = useState<VideoItem[]>([]);
   const [videosLoading, setVideosLoading] = useState(false);
@@ -532,17 +497,6 @@ const Admin: React.FC = () => {
     return (
       <div className="min-h-screen bg-warm-50 flex items-center justify-center">
         <div className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-sm animate-scale-in">
-          <div className="flex justify-center mb-6">
-            <svg width="40" height="40" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-              {/* Blue circular background */}
-              <circle cx="14" cy="14" r="14" fill="#4285F4" />
-              {/* White solid triangle */}
-              <path d="M14 7.5 L20.5 19 L7.5 19 Z" fill="white" />
-            </svg>
-          </div>
-          <h2 className="text-xl font-medium text-warm-800 text-center mb-6">
-            管理后台
-          </h2>
           <input
             type="password"
             value={password}
@@ -552,7 +506,7 @@ const Admin: React.FC = () => {
             }}
             onKeyDown={handleLoginKeyDown}
             placeholder="请输入密码"
-            className="w-full px-4 py-3 border border-warm-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent bg-warm-50 mb-4 transition-colors"
+            className="w-full px-4 py-3 border border-warm-200 rounded-xl focus:outline-none focus:border-warm-600 bg-warm-50 mb-4 transition-colors"
             autoFocus
           />
           {authError && (
@@ -621,8 +575,6 @@ const Admin: React.FC = () => {
       console.log('⏰ 完成时间:', new Date().toLocaleString('zh-CN'));
       console.log('📊 结果统计：');
       console.log('   - 字幕段落:', responseData.data.segments?.length || 0);
-      console.log('   - 重点词汇:', responseData.data.red_list?.length || 0);
-      console.log('   - 专业术语:', responseData.data.blue_list?.length || 0);
       console.log('   - 章节数:', responseData.data.chapters?.length || 0);
       console.log('📺 视频标题:', responseData.metadata?.title || '未知');
       console.log('\n');
@@ -652,7 +604,7 @@ const Admin: React.FC = () => {
 
   const handleSave = async () => {
     if (!result || !metadata) {
-      window.alert('没有可发布的内容');
+      showToast('没有可发布的内容', false);
       return;
     }
 
@@ -662,7 +614,7 @@ const Admin: React.FC = () => {
       const payload = {
         ...result,
         metadata,
-        categories: [category],
+        categories: categories,
       };
 
       const response = await fetch(`${API_BASE}/api/articles`, {
@@ -678,12 +630,12 @@ const Admin: React.FC = () => {
         throw new Error(errorData.error || '发布失败');
       }
 
-      window.alert('文章已发布到首页！');
+      showToast('视频发布成功');
       setResult(null);
       setMetadata(null);
       fetchVideos();
     } catch (err) {
-      window.alert(err instanceof Error ? err.message : '发布失败，请重试');
+      showToast(err instanceof Error ? err.message : '发布失败，请重试', false);
     } finally {
       setIsSaving(false);
     }
@@ -703,6 +655,16 @@ const Admin: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-warm-50">
+      {/* Toast */}
+      <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-3 bg-white border border-warm-100 text-warm-800 text-[13px] rounded-xl shadow-md transition-all duration-300 ${toast ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2 pointer-events-none'}`}>
+        <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${toast?.success !== false ? 'bg-green-100' : 'bg-red-50'}`}>
+          {toast?.success !== false
+            ? <Check size={11} className="text-green-600" />
+            : <X size={11} className="text-red-400" />}
+        </div>
+        {toast?.message}
+      </div>
+
       {/* Header */}
       <div className="bg-white/80 backdrop-blur-md border-b border-warm-200/60 sticky top-0 z-40">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-5 max-w-[95vw] 2xl:max-w-[1600px]">
@@ -772,7 +734,7 @@ const Admin: React.FC = () => {
           <div className="text-center py-12">
             <p className="text-warm-400">
               {filter === 'all'
-                ? '暂无视频，点击上方卡片添加'
+                ? ''
                 : filter === 'published'
                 ? '暂无已发布的视频'
                 : '暂无已隐藏的视频'}
@@ -785,8 +747,8 @@ const Admin: React.FC = () => {
       {result && (
         <AnalysisResultPanel
           result={result}
-          category={category}
-          setCategory={setCategory}
+          categories={categories}
+          setCategories={setCategories}
           isSaving={isSaving}
           onSave={handleSave}
           onClose={() => {

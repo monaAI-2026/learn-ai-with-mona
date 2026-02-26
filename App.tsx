@@ -4,6 +4,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Home from './views/Home';
 import VideoDetail from './views/VideoDetail';
 import Admin from './views/Admin';
+import Playground from './views/Playground';
 
 const App: React.FC = () => {
   return (
@@ -12,6 +13,7 @@ const App: React.FC = () => {
         <Route path="/" element={<Home />} />
         <Route path="/video/:id" element={<VideoDetail />} />
         <Route path="/admin" element={<Admin />} />
+        <Route path="/playground" element={<Playground />} />
       </Routes>
     </Router>
   );
